@@ -1,44 +1,85 @@
 from __future__ import annotations
 
 import ctypes
+import functools
 import json
+import logging
 import os
 import platform
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
+import urllib.error
 import urllib.request
 import uuid
 import zipfile
 
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Callable
 
 
 # =============================================================================
-# Configuration
+# Application
 # =============================================================================
 
-APP_NAME = "Portable Software Installer"
-APP_VERSION = "2.0.0"
+APP_NAME = "Portable Developer Environment"
+APP_VERSION = "3.0.0"
 
 ROOT = Path(__file__).resolve().parent
+LOG_FILE = ROOT / "installer.log"
 
-HTTP_TIMEOUT = 60
-DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+HTTP_TIMEOUT = 90
+HTTP_RETRIES = 3
+DOWNLOAD_CHUNK = 1024 * 1024
 
 USER_AGENT = (
     f"firmeen-portable-installer/{APP_VERSION} "
-    f"(Windows; Python {platform.python_version()})"
+    f"Python/{platform.python_version()} "
+    f"Windows/{platform.release()}"
 )
 
 
 # =============================================================================
-# Optional Windows certificate integration
+# Logging
+# =============================================================================
+
+LOGGER = logging.getLogger("portable-installer")
+LOGGER.setLevel(logging.INFO)
+
+if not LOGGER.handlers:
+    try:
+        ROOT.mkdir(parents=True, exist_ok=True)
+
+        handler = logging.FileHandler(
+            LOG_FILE,
+            encoding="utf-8",
+        )
+
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s | %(levelname)s | %(message)s"
+            )
+        )
+
+        LOGGER.addHandler(handler)
+
+    except Exception:
+        pass
+
+
+def log(tag: str, message: str) -> None:
+    print(f"[{tag:<9}] {message}")
+    LOGGER.info("%s | %s", tag, message)
+
+
+# =============================================================================
+# Optional Windows trust-store support
 # =============================================================================
 
 try:
@@ -50,7 +91,7 @@ except Exception:
 
 
 # =============================================================================
-# ANSI / Terminal
+# Terminal
 # =============================================================================
 
 ESC = "\x1b["
@@ -59,9 +100,11 @@ RESET = f"{ESC}0m"
 BOLD = f"{ESC}1m"
 DIM = f"{ESC}2m"
 
+RED = f"{ESC}31m"
 GREEN = f"{ESC}32m"
 YELLOW = f"{ESC}33m"
-RED = f"{ESC}31m"
+BLUE = f"{ESC}34m"
+MAGENTA = f"{ESC}35m"
 CYAN = f"{ESC}36m"
 
 CLEAR_SCREEN = f"{ESC}2J"
@@ -76,10 +119,6 @@ ALT_SCREEN_OFF = f"{ESC}?1049l"
 
 
 def enable_virtual_terminal() -> bool:
-    """
-    Enable ANSI / Virtual Terminal processing for modern Windows consoles.
-    """
-
     if os.name != "nt":
         return True
 
@@ -89,16 +128,27 @@ def enable_virtual_terminal() -> bool:
         STD_OUTPUT_HANDLE = -11
         ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
 
-        handle = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+        handle = kernel32.GetStdHandle(
+            STD_OUTPUT_HANDLE
+        )
 
         mode = ctypes.c_uint32()
 
-        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+        if not kernel32.GetConsoleMode(
+            handle,
+            ctypes.byref(mode),
+        ):
             return False
 
-        new_mode = mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        new_mode = (
+            mode.value
+            | ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        )
 
-        if not kernel32.SetConsoleMode(handle, new_mode):
+        if not kernel32.SetConsoleMode(
+            handle,
+            new_mode,
+        ):
             return False
 
         return True
@@ -107,25 +157,28 @@ def enable_virtual_terminal() -> bool:
         return False
 
 
-def styled(text: str, style: str, enabled: bool) -> str:
+def style(
+    text: str,
+    code: str,
+    enabled: bool,
+) -> str:
     if not enabled:
         return text
 
-    return f"{style}{text}{RESET}"
+    return f"{code}{text}{RESET}"
 
 
 class TerminalRenderer:
     """
     Flicker-free terminal renderer.
 
-    Instead of clearing the entire terminal after every key press,
-    this renderer compares the previous frame with the new frame
-    and updates only the changed lines.
+    Only changed lines are re-rendered.
     """
 
     def __init__(self) -> None:
         self.ansi = False
         self.previous_lines: list[str] = []
+        self.previous_size: tuple[int, int] | None = None
 
     def __enter__(self) -> "TerminalRenderer":
         self.ansi = enable_virtual_terminal()
@@ -143,7 +196,12 @@ class TerminalRenderer:
 
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type,
+        exc,
+        traceback,
+    ) -> None:
         if self.ansi:
             sys.stdout.write(
                 RESET
@@ -152,11 +210,32 @@ class TerminalRenderer:
             )
             sys.stdout.flush()
 
-    def paint(self, lines: list[str]) -> None:
+    def paint(
+        self,
+        lines: list[str],
+    ) -> None:
         if not self.ansi:
             os.system("cls")
             print("\n".join(lines))
             return
+
+        terminal = shutil.get_terminal_size(
+            fallback=(120, 40)
+        )
+
+        size = (
+            terminal.columns,
+            terminal.lines,
+        )
+
+        if size != self.previous_size:
+            sys.stdout.write(
+                CLEAR_SCREEN
+                + HOME
+            )
+
+            self.previous_lines = []
+            self.previous_size = size
 
         total = max(
             len(lines),
@@ -190,44 +269,64 @@ class TerminalRenderer:
             )
 
         if output:
-            sys.stdout.write("".join(output))
+            sys.stdout.write(
+                "".join(output)
+            )
+
             sys.stdout.flush()
 
-        self.previous_lines = lines.copy()
+        self.previous_lines = (
+            lines.copy()
+        )
 
 
 # =============================================================================
-# General helpers
+# Process execution
 # =============================================================================
-
-def log(tag: str, message: str) -> None:
-    print(f"[{tag:<7}] {message}")
-
 
 def run(
     args: list[str],
     *,
-    capture: bool = False,
     cwd: Path | None = None,
+    capture: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
 
-    launch_args = args
+    if not args:
+        raise ValueError(
+            "Command cannot be empty"
+        )
 
-    if args:
-        executable = Path(args[0])
+    launch = list(args)
 
-        if executable.suffix.lower() in {".cmd", ".bat"}:
-            launch_args = [
-                os.environ.get("COMSPEC", "cmd.exe"),
-                "/d",
-                "/s",
-                "/c",
-                subprocess.list2cmdline(args),
-            ]
+    executable = Path(
+        launch[0]
+    )
+
+    if executable.suffix.lower() in {
+        ".cmd",
+        ".bat",
+    }:
+        launch = [
+            os.environ.get(
+                "COMSPEC",
+                "cmd.exe",
+            ),
+            "/d",
+            "/s",
+            "/c",
+            subprocess.list2cmdline(args),
+        ]
+
+    LOGGER.info(
+        "RUN | %s",
+        subprocess.list2cmdline(args),
+    )
 
     return subprocess.run(
-        launch_args,
+        launch,
         cwd=str(cwd) if cwd else None,
+        env=env,
         text=True,
         capture_output=capture,
         check=True,
@@ -235,16 +334,21 @@ def run(
     )
 
 
-def verify(args: list[str]) -> str:
+def verify(
+    args: list[str],
+    *,
+    env: dict[str, str] | None = None,
+) -> str:
     try:
-        process = run(
+        result = run(
             args,
             capture=True,
+            env=env,
         )
 
         output = (
-            process.stdout
-            or process.stderr
+            result.stdout
+            or result.stderr
             or "OK"
         ).strip()
 
@@ -254,7 +358,9 @@ def verify(args: list[str]) -> str:
         return output.splitlines()[0]
 
     except Exception as exc:
-        return f"Verification failed: {exc}"
+        return (
+            f"verification failed: {exc}"
+        )
 
 
 # =============================================================================
@@ -265,56 +371,88 @@ def request_headers(
     extra: dict[str, str] | None = None,
 ) -> dict[str, str]:
 
-    headers = {
+    result = {
         "User-Agent": USER_AGENT,
         "Accept": "*/*",
     }
 
     if extra:
-        headers.update(extra)
+        result.update(extra)
 
-    return headers
+    return result
 
 
-def get_bytes(
+def request_bytes(
     url: str,
-    extra_headers: dict[str, str] | None = None,
+    *,
+    headers: dict[str, str] | None = None,
 ) -> bytes:
 
-    request = urllib.request.Request(
-        url,
-        headers=request_headers(extra_headers),
+    last_error: Exception | None = None
+
+    for attempt in range(
+        1,
+        HTTP_RETRIES + 1,
+    ):
+        try:
+            request = urllib.request.Request(
+                url,
+                headers=request_headers(
+                    headers
+                ),
+            )
+
+            with urllib.request.urlopen(
+                request,
+                timeout=HTTP_TIMEOUT,
+            ) as response:
+                return response.read()
+
+        except KeyboardInterrupt:
+            raise
+
+        except Exception as exc:
+            last_error = exc
+
+            if attempt >= HTTP_RETRIES:
+                break
+
+            time.sleep(
+                min(
+                    attempt * 2,
+                    5,
+                )
+            )
+
+    raise RuntimeError(
+        f"HTTP request failed: {url}: {last_error}"
     )
 
-    with urllib.request.urlopen(
-        request,
-        timeout=HTTP_TIMEOUT,
-    ) as response:
-        return response.read()
 
-
-def get_text(
+def request_text(
     url: str,
-    extra_headers: dict[str, str] | None = None,
+    *,
+    headers: dict[str, str] | None = None,
 ) -> str:
 
-    return get_bytes(
+    return request_bytes(
         url,
-        extra_headers,
+        headers=headers,
     ).decode(
         "utf-8",
         errors="replace",
     )
 
 
-def get_json(
+def request_json(
     url: str,
-    extra_headers: dict[str, str] | None = None,
+    *,
+    headers: dict[str, str] | None = None,
 ):
     return json.loads(
-        get_text(
+        request_text(
             url,
-            extra_headers,
+            headers=headers,
         )
     )
 
@@ -337,100 +475,146 @@ def download(
         missing_ok=True
     )
 
-    request = urllib.request.Request(
-        url,
-        headers=request_headers(),
-    )
-
     log(
         "DOWNLOAD",
         url,
     )
 
-    try:
-        with urllib.request.urlopen(
-            request,
-            timeout=HTTP_TIMEOUT,
-        ) as response, partial.open("wb") as output:
+    last_error: Exception | None = None
 
-            total = int(
-                response.headers.get("Content-Length")
-                or 0
+    for attempt in range(
+        1,
+        HTTP_RETRIES + 1,
+    ):
+        try:
+            request = urllib.request.Request(
+                url,
+                headers=request_headers(),
             )
 
-            downloaded = 0
-            last_update = 0.0
+            with urllib.request.urlopen(
+                request,
+                timeout=HTTP_TIMEOUT,
+            ) as response, partial.open(
+                "wb"
+            ) as output:
 
-            while True:
-                chunk = response.read(
-                    DOWNLOAD_CHUNK_SIZE
+                total = int(
+                    response.headers.get(
+                        "Content-Length"
+                    )
+                    or 0
                 )
 
-                if not chunk:
-                    break
+                downloaded = 0
+                last_draw = 0.0
 
-                output.write(chunk)
-
-                downloaded += len(chunk)
-
-                now = time.monotonic()
-
-                if now - last_update < 0.15:
-                    continue
-
-                if total:
-                    percentage = (
-                        downloaded
-                        / total
-                        * 100
+                while True:
+                    chunk = response.read(
+                        DOWNLOAD_CHUNK
                     )
 
-                    print(
-                        "\r           "
-                        f"{downloaded / 1048576:8.1f} MB"
-                        " / "
-                        f"{total / 1048576:8.1f} MB"
-                        f"   {percentage:6.2f}%",
-                        end="",
-                        flush=True,
+                    if not chunk:
+                        break
+
+                    output.write(
+                        chunk
                     )
 
-                else:
-                    print(
-                        "\r           "
-                        f"{downloaded / 1048576:8.1f} MB",
-                        end="",
-                        flush=True,
+                    downloaded += len(
+                        chunk
                     )
 
-                last_update = now
+                    now = (
+                        time.monotonic()
+                    )
 
-            print()
+                    if (
+                        now - last_draw
+                        < 0.15
+                    ):
+                        continue
 
-    except Exception:
-        partial.unlink(
-            missing_ok=True
-        )
-        raise
+                    if total:
+                        percentage = (
+                            downloaded
+                            / total
+                            * 100
+                        )
 
-    partial.replace(
-        destination
+                        print(
+                            "\r           "
+                            f"{downloaded / 1048576:8.1f} MB"
+                            " / "
+                            f"{total / 1048576:8.1f} MB"
+                            f"   {percentage:6.2f}%",
+                            end="",
+                            flush=True,
+                        )
+
+                    else:
+                        print(
+                            "\r           "
+                            f"{downloaded / 1048576:8.1f} MB",
+                            end="",
+                            flush=True,
+                        )
+
+                    last_draw = now
+
+                print()
+
+            partial.replace(
+                destination
+            )
+
+            return destination
+
+        except KeyboardInterrupt:
+            partial.unlink(
+                missing_ok=True
+            )
+            raise
+
+        except Exception as exc:
+            last_error = exc
+
+            partial.unlink(
+                missing_ok=True
+            )
+
+            if attempt >= HTTP_RETRIES:
+                break
+
+            log(
+                "RETRY",
+                (
+                    f"Attempt {attempt}/"
+                    f"{HTTP_RETRIES} failed: {exc}"
+                ),
+            )
+
+            time.sleep(
+                min(
+                    attempt * 2,
+                    5,
+                )
+            )
+
+    raise RuntimeError(
+        f"Download failed: {url}: {last_error}"
     )
 
-    return destination
-
 
 # =============================================================================
-# GitHub release helper
+# GitHub Releases
 # =============================================================================
 
-def github_asset(
-    repository: str,
-    matcher: Callable[[str], bool],
-) -> tuple[str, str]:
-
+def github_headers() -> dict[str, str]:
     headers = {
-        "Accept": "application/vnd.github+json",
+        "Accept": (
+            "application/vnd.github+json"
+        ),
     }
 
     token = (
@@ -443,73 +627,253 @@ def github_asset(
             f"Bearer {token}"
         )
 
-    release = get_json(
-        f"https://api.github.com/repos/"
-        f"{repository}/releases/latest",
-        headers,
+    return headers
+
+
+@functools.lru_cache(
+    maxsize=32
+)
+def github_release(
+    repository: str,
+) -> dict:
+
+    return request_json(
+        (
+            "https://api.github.com/repos/"
+            f"{repository}/releases/latest"
+        ),
+        headers=github_headers(),
     )
 
-    for asset in release.get("assets", []):
-        name = asset.get("name", "")
+
+def github_asset(
+    repository: str,
+    matcher: Callable[[str], bool],
+) -> tuple[str, str]:
+
+    release = github_release(
+        repository
+    )
+
+    for asset in release.get(
+        "assets",
+        [],
+    ):
+        name = asset.get(
+            "name",
+            "",
+        )
 
         if matcher(name):
             return (
                 name,
-                asset["browser_download_url"],
+                asset[
+                    "browser_download_url"
+                ],
             )
 
     raise RuntimeError(
-        "Unable to find a compatible release asset "
-        f"for {repository}"
+        f"No matching release asset for {repository}"
     )
 
 
-# =============================================================================
-# Archive helpers
-# =============================================================================
+def github_asset_best(
+    repository: str,
+    scorer: Callable[[str], int],
+) -> tuple[str, str]:
 
-def archive_root(
-    base: Path,
-    required_file: str,
-) -> Path:
+    release = github_release(
+        repository
+    )
 
-    required = Path(required_file)
+    candidates: list[
+        tuple[int, str, str]
+    ] = []
 
-    direct = base / required
-
-    if direct.exists():
-        return base
-
-    for candidate in base.rglob(
-        required.name
+    for asset in release.get(
+        "assets",
+        [],
     ):
-        if not candidate.is_file():
-            continue
+        name = asset.get(
+            "name",
+            "",
+        )
 
-        root = candidate
+        score = scorer(
+            name
+        )
 
-        for _ in required.parts:
-            root = root.parent
+        if score > 0:
+            candidates.append(
+                (
+                    score,
+                    name,
+                    asset[
+                        "browser_download_url"
+                    ],
+                )
+            )
 
-        if (root / required).exists():
-            return root
+    if not candidates:
+        raise RuntimeError(
+            f"No suitable release asset for {repository}"
+        )
 
-    raise RuntimeError(
-        f"Archive does not contain {required_file}"
+    candidates.sort(
+        reverse=True
+    )
+
+    _, name, url = (
+        candidates[0]
+    )
+
+    return (
+        name,
+        url,
     )
 
 
-def remove_path(path: Path) -> None:
+# =============================================================================
+# Filesystem
+# =============================================================================
+
+def remove_path(
+    path: Path,
+) -> None:
+
     if path.is_dir():
-        shutil.rmtree(path)
+        shutil.rmtree(
+            path
+        )
 
     elif path.exists():
         path.unlink()
 
 
+def archive_root(
+    base: Path,
+    required: str,
+) -> Path:
+
+    relative = Path(
+        required
+    )
+
+    if (
+        base
+        / relative
+    ).exists():
+        return base
+
+    for found in base.rglob(
+        relative.name
+    ):
+        if not found.is_file():
+            continue
+
+        candidate = found
+
+        for _ in relative.parts:
+            candidate = (
+                candidate.parent
+            )
+
+        if (
+            candidate
+            / relative
+        ).exists():
+            return candidate
+
+    raise RuntimeError(
+        f"Required file not found in archive: {required}"
+    )
+
+
+def safe_extract_zip(
+    archive: Path,
+    destination: Path,
+) -> None:
+
+    destination.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    root = destination.resolve()
+
+    with zipfile.ZipFile(
+        archive
+    ) as zip_file:
+
+        for info in zip_file.infolist():
+            target = (
+                destination
+                / info.filename
+            ).resolve()
+
+            if not target.is_relative_to(
+                root
+            ):
+                raise RuntimeError(
+                    "Unsafe ZIP path detected"
+                )
+
+        zip_file.extractall(
+            destination
+        )
+
+
+def safe_extract_tar(
+    archive: Path,
+    destination: Path,
+) -> None:
+
+    destination.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    root = destination.resolve()
+
+    with tarfile.open(
+        archive,
+        "r:*",
+    ) as tar:
+
+        members = (
+            tar.getmembers()
+        )
+
+        for member in members:
+            target = (
+                destination
+                / member.name
+            ).resolve()
+
+            if not target.is_relative_to(
+                root
+            ):
+                raise RuntimeError(
+                    "Unsafe TAR path detected"
+                )
+
+            if (
+                member.issym()
+                or member.islnk()
+            ):
+                raise RuntimeError(
+                    "Archive contains links"
+                )
+
+        tar.extractall(
+            destination
+        )
+
+
 def replace_tree(
     source: Path,
     target: Path,
+    *,
     preserve: tuple[str, ...] = (),
 ) -> None:
 
@@ -536,13 +900,22 @@ def replace_tree(
 
         if backup:
             for relative in preserve:
-                old = backup / relative
-                new = target / relative
+                old = (
+                    backup
+                    / relative
+                )
+
+                new = (
+                    target
+                    / relative
+                )
 
                 if not old.exists():
                     continue
 
-                remove_path(new)
+                remove_path(
+                    new
+                )
 
                 new.parent.mkdir(
                     parents=True,
@@ -559,10 +932,12 @@ def replace_tree(
             )
 
     except Exception:
-        remove_path(target)
+        remove_path(
+            target
+        )
 
         if (
-            backup is not None
+            backup
             and backup.exists()
         ):
             backup.rename(
@@ -575,17 +950,20 @@ def replace_tree(
 def install_zip(
     url: str,
     target: Path,
-    required_file: str,
+    *,
+    required: str,
     archive_name: str,
     preserve: tuple[str, ...] = (),
 ) -> None:
 
     with tempfile.TemporaryDirectory(
-        prefix=".portable-installer-",
+        prefix=".installer-",
         dir=str(ROOT),
-    ) as temp_dir:
+    ) as temporary:
 
-        temp = Path(temp_dir)
+        temp = Path(
+            temporary
+        )
 
         archive = download(
             url,
@@ -597,37 +975,135 @@ def install_zip(
             / "extracted"
         )
 
-        extracted.mkdir()
+        log(
+            "EXTRACT",
+            archive.name,
+        )
+
+        safe_extract_zip(
+            archive,
+            extracted,
+        )
+
+        source = archive_root(
+            extracted,
+            required,
+        )
+
+        replace_tree(
+            source,
+            target,
+            preserve=preserve,
+        )
+
+
+def install_tar(
+    url: str,
+    target: Path,
+    *,
+    required: str,
+    archive_name: str,
+) -> None:
+
+    with tempfile.TemporaryDirectory(
+        prefix=".installer-",
+        dir=str(ROOT),
+    ) as temporary:
+
+        temp = Path(
+            temporary
+        )
+
+        archive = download(
+            url,
+            temp / archive_name,
+        )
+
+        extracted = (
+            temp
+            / "extracted"
+        )
 
         log(
             "EXTRACT",
             archive.name,
         )
 
-        with zipfile.ZipFile(
-            archive
-        ) as zip_file:
-            zip_file.extractall(
-                extracted
-            )
-
-        root = archive_root(
+        safe_extract_tar(
+            archive,
             extracted,
-            required_file,
+        )
+
+        source = archive_root(
+            extracted,
+            required,
         )
 
         replace_tree(
-            root,
+            source,
             target,
-            preserve,
         )
 
 
+def install_single_file(
+    url: str,
+    target: Path,
+    *,
+    filename: str,
+) -> None:
+
+    target.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with tempfile.TemporaryDirectory(
+        prefix=".installer-",
+        dir=str(ROOT),
+    ) as temporary:
+
+        temp = Path(
+            temporary
+        )
+
+        downloaded = download(
+            url,
+            temp / filename,
+        )
+
+        replacement = (
+            target.parent
+            / (
+                f".{target.name}.new-"
+                f"{uuid.uuid4().hex[:8]}"
+            )
+        )
+
+        shutil.copy2(
+            downloaded,
+            replacement,
+        )
+
+        try:
+            os.replace(
+                replacement,
+                target,
+            )
+
+        finally:
+            replacement.unlink(
+                missing_ok=True
+            )
+
+
 # =============================================================================
-# PATH management
+# Permanent user environment
 # =============================================================================
 
-def normalized_path(value: str) -> str:
+def normalized_path(
+    value: str,
+) -> str:
+
     return os.path.normcase(
         os.path.normpath(
             os.path.expandvars(
@@ -639,7 +1115,60 @@ def normalized_path(value: str) -> str:
     )
 
 
-def add_user_path(*paths: Path) -> None:
+def set_user_environment(
+    name: str,
+    value: str,
+) -> None:
+
+    import winreg
+
+    with winreg.CreateKeyEx(
+        winreg.HKEY_CURRENT_USER,
+        "Environment",
+        0,
+        winreg.KEY_READ
+        | winreg.KEY_WRITE,
+    ) as key:
+
+        winreg.SetValueEx(
+            key,
+            name,
+            0,
+            winreg.REG_EXPAND_SZ,
+            value,
+        )
+
+    os.environ[name] = value
+
+    broadcast_environment_change()
+
+
+def broadcast_environment_change() -> None:
+    try:
+        HWND_BROADCAST = 0xFFFF
+        WM_SETTINGCHANGE = 0x001A
+        SMTO_ABORTIFHUNG = 0x0002
+
+        result = ctypes.c_void_p()
+
+        ctypes.windll.user32.SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            0,
+            "Environment",
+            SMTO_ABORTIFHUNG,
+            3000,
+            ctypes.byref(result),
+        )
+
+    except Exception:
+        pass
+
+
+def add_user_path(
+    *paths: Path,
+) -> None:
+
     import winreg
 
     values = [
@@ -660,7 +1189,7 @@ def add_user_path(*paths: Path) -> None:
     ) as key:
 
         try:
-            current, registry_type = (
+            current, value_type = (
                 winreg.QueryValueEx(
                     key,
                     "Path",
@@ -669,26 +1198,30 @@ def add_user_path(*paths: Path) -> None:
 
         except FileNotFoundError:
             current = ""
-            registry_type = (
+            value_type = (
                 winreg.REG_EXPAND_SZ
             )
 
         entries = [
-            item
-            for item in current.split(";")
-            if item.strip()
+            entry
+            for entry in current.split(";")
+            if entry.strip()
         ]
 
         known = {
-            normalized_path(item)
-            for item in entries
+            normalized_path(
+                entry
+            )
+            for entry in entries
         }
 
         changed = False
 
         for value in values:
             normalized = (
-                normalized_path(value)
+                normalized_path(
+                    value
+                )
             )
 
             if normalized in known:
@@ -709,34 +1242,36 @@ def add_user_path(*paths: Path) -> None:
                 key,
                 "Path",
                 0,
-                registry_type,
+                value_type,
                 ";".join(entries),
             )
 
-    #
-    # Refresh PATH for this Python process as well.
-    #
-
     process_entries = [
-        item
-        for item in os.environ.get(
+        entry
+        for entry in os.environ.get(
             "PATH",
             "",
         ).split(";")
-        if item.strip()
+        if entry.strip()
     ]
 
-    known_process = {
-        normalized_path(item)
-        for item in process_entries
+    process_known = {
+        normalized_path(
+            entry
+        )
+        for entry in process_entries
     }
 
-    for value in reversed(values):
+    for value in reversed(
+        values
+    ):
         normalized = (
-            normalized_path(value)
+            normalized_path(
+                value
+            )
         )
 
-        if normalized in known_process:
+        if normalized in process_known:
             continue
 
         process_entries.insert(
@@ -744,7 +1279,7 @@ def add_user_path(*paths: Path) -> None:
             value,
         )
 
-        known_process.add(
+        process_known.add(
             normalized
         )
 
@@ -752,51 +1287,25 @@ def add_user_path(*paths: Path) -> None:
         process_entries
     )
 
-    #
-    # Broadcast environment update to Windows.
-    #
-
-    try:
-        HWND_BROADCAST = 0xFFFF
-        WM_SETTINGCHANGE = 0x001A
-        SMTO_ABORTIFHUNG = 0x0002
-
-        result = ctypes.c_void_p()
-
-        ctypes.windll.user32.SendMessageTimeoutW(
-            HWND_BROADCAST,
-            WM_SETTINGCHANGE,
-            0,
-            "Environment",
-            SMTO_ABORTIFHUNG,
-            5000,
-            ctypes.byref(result),
-        )
-
-    except Exception:
-        pass
-
-
-# =============================================================================
-# Version helpers
-# =============================================================================
-
-def version_tuple(
-    text: str,
-) -> tuple[int, ...]:
-
-    return tuple(
-        int(value)
-        for value in re.findall(
-            r"\d+",
-            text,
-        )
-    )
+    broadcast_environment_change()
 
 
 # =============================================================================
 # Source discovery
 # =============================================================================
+
+def version_tuple(
+    value: str,
+) -> tuple[int, ...]:
+
+    return tuple(
+        int(number)
+        for number in re.findall(
+            r"\d+",
+            value,
+        )
+    )
+
 
 def node_source() -> tuple[
     str,
@@ -804,22 +1313,26 @@ def node_source() -> tuple[
     str,
 ]:
 
-    releases = get_json(
+    releases = request_json(
         "https://nodejs.org/dist/index.json"
     )
 
     for release in releases:
-        if not release.get("lts"):
+        if not release.get(
+            "lts"
+        ):
             continue
 
-        version = release["version"]
+        version = release[
+            "version"
+        ]
 
         filename = (
             f"node-{version}-win-x64.zip"
         )
 
         url = (
-            f"https://nodejs.org/dist/"
+            "https://nodejs.org/dist/"
             f"{version}/{filename}"
         )
 
@@ -830,7 +1343,7 @@ def node_source() -> tuple[
         )
 
     raise RuntimeError(
-        "Unable to discover Node.js LTS release"
+        "Unable to discover Node.js LTS"
     )
 
 
@@ -841,18 +1354,21 @@ def mysql_source() -> tuple[
 ]:
 
     pages = [
-        "https://dev.mysql.com/downloads/mysql/",
         (
-            "https://dev.mysql.com/downloads/"
-            "mysql/9.7.html?os=3"
+            "https://dev.mysql.com/"
+            "downloads/mysql/"
         ),
         (
-            "https://dev.mysql.com/downloads/"
-            "mysql/9.6.html?os=3"
+            "https://dev.mysql.com/"
+            "downloads/mysql/9.7.html?os=3"
         ),
         (
-            "https://dev.mysql.com/downloads/"
-            "mysql/8.4.html?os=3"
+            "https://dev.mysql.com/"
+            "downloads/mysql/9.6.html?os=3"
+        ),
+        (
+            "https://dev.mysql.com/"
+            "downloads/mysql/8.4.html?os=3"
         ),
     ]
 
@@ -860,7 +1376,7 @@ def mysql_source() -> tuple[
 
     for page in pages:
         try:
-            html = get_text(
+            html = request_text(
                 page
             )
 
@@ -881,7 +1397,7 @@ def mysql_source() -> tuple[
 
     if not versions:
         raise RuntimeError(
-            "Unable to discover MySQL Windows ZIP release"
+            "Unable to discover MySQL ZIP release"
         )
 
     version = max(
@@ -916,10 +1432,12 @@ def xampp_source() -> tuple[
     str,
 ]:
 
-    listing = get_text(
-        "https://sourceforge.net/"
-        "projects/xampp/files/"
-        "XAMPP%20Windows/"
+    listing = request_text(
+        (
+            "https://sourceforge.net/"
+            "projects/xampp/files/"
+            "XAMPP%20Windows/"
+        )
     )
 
     versions = re.findall(
@@ -931,21 +1449,25 @@ def xampp_source() -> tuple[
         re.IGNORECASE,
     )
 
-    if versions:
-        version = max(
-            set(versions),
-            key=version_tuple,
+    if not versions:
+        raise RuntimeError(
+            "Unable to discover XAMPP release"
         )
-    else:
-        version = "8.2.12"
 
-    detail = get_text(
-        "https://sourceforge.net/"
-        "projects/xampp/files/"
-        f"XAMPP%20Windows/{version}/"
+    version = max(
+        set(versions),
+        key=version_tuple,
     )
 
-    matches = re.findall(
+    detail = request_text(
+        (
+            "https://sourceforge.net/"
+            "projects/xampp/files/"
+            f"XAMPP%20Windows/{version}/"
+        )
+    )
+
+    candidates = re.findall(
         (
             rf"(xampp-portable-windows-x64-"
             rf"{re.escape(version)}-"
@@ -955,20 +1477,17 @@ def xampp_source() -> tuple[
         re.IGNORECASE,
     )
 
-    filename = (
-        matches[0]
-        if matches
-        else (
-            "xampp-portable-windows-x64-"
-            f"{version}-0-VS16.zip"
+    if not candidates:
+        raise RuntimeError(
+            "Portable XAMPP ZIP was not found"
         )
-    )
+
+    filename = candidates[0]
 
     url = (
         "https://downloads.sourceforge.net/"
         "project/xampp/"
-        f"XAMPP%20Windows/"
-        f"{version}/"
+        f"XAMPP%20Windows/{version}/"
         f"{filename}"
     )
 
@@ -980,7 +1499,7 @@ def xampp_source() -> tuple[
 
 
 # =============================================================================
-# Installers
+# Node ecosystem
 # =============================================================================
 
 def install_node() -> str:
@@ -988,23 +1507,20 @@ def install_node() -> str:
         node_source()
     )
 
-    target = (
-        ROOT
-        / "node"
-    )
+    target = ROOT / "node"
 
     install_zip(
         url,
         target,
-        "node.exe",
-        filename,
+        required="node.exe",
+        archive_name=filename,
     )
 
     add_user_path(
         target
     )
 
-    result = verify(
+    return verify(
         [
             str(
                 target
@@ -1014,126 +1530,669 @@ def install_node() -> str:
         ]
     )
 
-    return (
-        f"{result} (LTS {version})"
-    )
 
-
-def install_mysql() -> str:
-    version, filename, url = (
-        mysql_source()
-    )
-
-    target = (
+def ensure_node() -> Path:
+    executable = (
         ROOT
-        / "mysql"
+        / "node"
+        / "node.exe"
     )
 
-    install_zip(
-        url,
-        target,
-        r"bin\mysql.exe",
-        filename,
-        preserve=(
-            "data",
-            "my.ini",
-        ),
+    if not executable.exists():
+        install_node()
+
+    return executable
+
+
+def npm_path() -> Path:
+    ensure_node()
+
+    npm = (
+        ROOT
+        / "node"
+        / "npm.cmd"
     )
 
-    add_user_path(
-        target
-        / "bin"
+    if not npm.exists():
+        raise RuntimeError(
+            "npm.cmd was not found"
+        )
+
+    return npm
+
+
+def npm_global_install(
+    package: str,
+    target: Path,
+    command: str,
+) -> str:
+
+    target.mkdir(
+        parents=True,
+        exist_ok=True,
     )
 
-    result = verify(
+    npm = npm_path()
+
+    log(
+        "NPM",
+        f"Installing {package}",
+    )
+
+    run(
         [
-            str(
-                target
-                / "bin"
-                / "mysql.exe"
-            ),
-            "--version",
+            str(npm),
+            "install",
+            "--global",
+            "--prefix",
+            str(target),
+            "--no-audit",
+            "--no-fund",
+            package,
         ]
     )
 
-    return (
-        f"{result} ({version})"
+    add_user_path(
+        target
+    )
+
+    candidates = [
+        target / f"{command}.cmd",
+        target / f"{command}.exe",
+    ]
+
+    for executable in candidates:
+        if executable.exists():
+            return verify(
+                [
+                    str(executable),
+                    "--version",
+                ]
+            )
+
+    raise RuntimeError(
+        f"{command} executable was not created"
     )
 
 
-def install_notepad() -> str:
+def install_bun() -> str:
     filename, url = github_asset(
-        "notepad-plus-plus/notepad-plus-plus",
-        lambda name: bool(
-            re.search(
-                r"portable\.x64\.zip$",
-                name,
-                re.IGNORECASE,
-            )
+        "oven-sh/bun",
+        lambda name: (
+            name.lower()
+            == "bun-windows-x64.zip"
         ),
     )
 
-    target = (
-        ROOT
-        / "notepadpp"
-    )
+    target = ROOT / "bun"
 
     install_zip(
         url,
         target,
-        "notepad++.exe",
-        filename,
+        required="bun.exe",
+        archive_name=filename,
     )
 
     add_user_path(
         target
-    )
-
-    return "notepad++.exe ready"
-
-
-def install_vscode() -> str:
-    target = (
-        ROOT
-        / "VisualCode"
-    )
-
-    install_zip(
-        (
-            "https://update.code.visualstudio.com/"
-            "latest/win32-x64-archive/stable"
-        ),
-        target,
-        "Code.exe",
-        "vscode.zip",
-        preserve=(
-            "data",
-        ),
-    )
-
-    (
-        target
-        / "data"
-    ).mkdir(
-        exist_ok=True
-    )
-
-    add_user_path(
-        target,
-        target / "bin",
     )
 
     return verify(
         [
             str(
                 target
-                / "bin"
-                / "code.cmd"
+                / "bun.exe"
             ),
             "--version",
         ]
     )
 
+
+def install_pnpm() -> str:
+    filename, url = github_asset(
+        "pnpm/pnpm",
+        lambda name: (
+            name.lower()
+            == "pnpm-win-x64.exe"
+        ),
+    )
+
+    target = (
+        ROOT
+        / "pnpm"
+        / "pnpm.exe"
+    )
+
+    install_single_file(
+        url,
+        target,
+        filename=filename,
+    )
+
+    add_user_path(
+        target.parent
+    )
+
+    return verify(
+        [
+            str(target),
+            "--version",
+        ]
+    )
+
+
+def install_yarn() -> str:
+    ensure_node()
+
+    corepack_root = (
+        ROOT
+        / "corepack"
+    )
+
+    npm_global_install(
+        "corepack@latest",
+        corepack_root,
+        "corepack",
+    )
+
+    corepack = (
+        corepack_root
+        / "corepack.cmd"
+    )
+
+    yarn_dir = (
+        ROOT
+        / "yarn"
+    )
+
+    yarn_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    corepack_home = (
+        ROOT
+        / "corepack"
+        / "cache"
+    )
+
+    set_user_environment(
+        "COREPACK_HOME",
+        str(corepack_home),
+    )
+
+    environment = (
+        os.environ.copy()
+    )
+
+    environment[
+        "COREPACK_HOME"
+    ] = str(
+        corepack_home
+    )
+
+    log(
+        "COREPACK",
+        "Preparing Yarn stable",
+    )
+
+    run(
+        [
+            str(corepack),
+            "prepare",
+            "yarn@stable",
+            "--activate",
+        ],
+        env=environment,
+    )
+
+    run(
+        [
+            str(corepack),
+            "enable",
+            "--install-directory",
+            str(yarn_dir),
+            "yarn",
+        ],
+        env=environment,
+    )
+
+    add_user_path(
+        yarn_dir
+    )
+
+    yarn = (
+        yarn_dir
+        / "yarn.cmd"
+    )
+
+    if not yarn.exists():
+        raise RuntimeError(
+            "Yarn shim was not created"
+        )
+
+    return verify(
+        [
+            str(yarn),
+            "--version",
+        ],
+        env=environment,
+    )
+
+
+def install_codex() -> str:
+    return npm_global_install(
+        "@openai/codex@latest",
+        ROOT / "codex",
+        "codex",
+    )
+
+
+def install_claude() -> str:
+    return npm_global_install(
+        "@anthropic-ai/claude-code@latest",
+        ROOT / "claude",
+        "claude",
+    )
+
+
+# =============================================================================
+# Python ecosystem
+# =============================================================================
+
+def uv_paths() -> dict[str, Path]:
+    return {
+        "root": ROOT / "uv",
+        "cache": (
+            ROOT
+            / ".cache"
+            / "uv"
+        ),
+        "python_runtime": (
+            ROOT
+            / "python"
+            / "runtimes"
+        ),
+        "python_bin": (
+            ROOT
+            / "python"
+            / "bin"
+        ),
+    }
+
+
+def configure_uv_environment() -> dict[str, str]:
+    paths = uv_paths()
+
+    values = {
+        "UV_CACHE_DIR": str(
+            paths["cache"]
+        ),
+        "UV_PYTHON_INSTALL_DIR": str(
+            paths["python_runtime"]
+        ),
+        "UV_PYTHON_BIN_DIR": str(
+            paths["python_bin"]
+        ),
+    }
+
+    for name, value in values.items():
+        os.environ[
+            name
+        ] = value
+
+    return values
+
+
+def persist_uv_environment() -> None:
+    values = (
+        configure_uv_environment()
+    )
+
+    for name, value in values.items():
+        set_user_environment(
+            name,
+            value,
+        )
+
+
+def install_uv() -> str:
+    filename, url = github_asset(
+        "astral-sh/uv",
+        lambda name: (
+            name.lower()
+            == (
+                "uv-x86_64-pc-"
+                "windows-msvc.zip"
+            )
+        ),
+    )
+
+    target = (
+        ROOT
+        / "uv"
+    )
+
+    install_zip(
+        url,
+        target,
+        required="uv.exe",
+        archive_name=filename,
+    )
+
+    persist_uv_environment()
+
+    add_user_path(
+        target
+    )
+
+    return verify(
+        [
+            str(
+                target
+                / "uv.exe"
+            ),
+            "--version",
+        ]
+    )
+
+
+def ensure_uv() -> Path:
+    executable = (
+        ROOT
+        / "uv"
+        / "uv.exe"
+    )
+
+    if not executable.exists():
+        install_uv()
+
+    return executable
+
+
+def uv_environment(
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+
+    environment = (
+        os.environ.copy()
+    )
+
+    environment.update(
+        configure_uv_environment()
+    )
+
+    if extra:
+        environment.update(
+            extra
+        )
+
+    return environment
+
+
+def install_python_portable() -> str:
+    uv = ensure_uv()
+
+    paths = uv_paths()
+
+    paths[
+        "python_runtime"
+    ].mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    paths[
+        "python_bin"
+    ].mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    persist_uv_environment()
+
+    environment = (
+        uv_environment()
+    )
+
+    log(
+        "PYTHON",
+        "Installing managed CPython",
+    )
+
+    run(
+        [
+            str(uv),
+            "python",
+            "install",
+            "--default",
+        ],
+        env=environment,
+    )
+
+    add_user_path(
+        paths[
+            "python_bin"
+        ]
+    )
+
+    python = (
+        paths[
+            "python_bin"
+        ]
+        / "python.exe"
+    )
+
+    if not python.exists():
+        raise RuntimeError(
+            "Portable python.exe was not created"
+        )
+
+    return verify(
+        [
+            str(python),
+            "--version",
+        ],
+        env=environment,
+    )
+
+
+def ensure_python_portable() -> Path:
+    python = (
+        ROOT
+        / "python"
+        / "bin"
+        / "python.exe"
+    )
+
+    if not python.exists():
+        install_python_portable()
+
+    return python
+
+
+def install_pipx() -> str:
+    uv = ensure_uv()
+
+    python = (
+        ensure_python_portable()
+    )
+
+    root = (
+        ROOT
+        / "pipx"
+    )
+
+    tool_dir = (
+        root
+        / "tool"
+    )
+
+    tool_bin = (
+        root
+        / "bin"
+    )
+
+    app_home = (
+        root
+        / "home"
+    )
+
+    app_bin = (
+        root
+        / "apps"
+    )
+
+    environment = uv_environment(
+        {
+            "UV_TOOL_DIR": str(
+                tool_dir
+            ),
+            "UV_TOOL_BIN_DIR": str(
+                tool_bin
+            ),
+        }
+    )
+
+    log(
+        "UV",
+        "Installing pipx",
+    )
+
+    run(
+        [
+            str(uv),
+            "tool",
+            "install",
+            "--force",
+            "pipx",
+        ],
+        env=environment,
+    )
+
+    set_user_environment(
+        "PIPX_HOME",
+        str(app_home),
+    )
+
+    set_user_environment(
+        "PIPX_BIN_DIR",
+        str(app_bin),
+    )
+
+    set_user_environment(
+        "PIPX_DEFAULT_PYTHON",
+        str(python),
+    )
+
+    app_bin.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    add_user_path(
+        tool_bin,
+        app_bin,
+    )
+
+    executable = (
+        tool_bin
+        / "pipx.exe"
+    )
+
+    if not executable.exists():
+        raise RuntimeError(
+            "pipx.exe was not created"
+        )
+
+    return verify(
+        [
+            str(executable),
+            "--version",
+        ]
+    )
+
+
+def install_jupyterlab() -> str:
+    uv = ensure_uv()
+
+    ensure_python_portable()
+
+    root = (
+        ROOT
+        / "jupyterlab"
+    )
+
+    tool_dir = (
+        root
+        / "tool"
+    )
+
+    tool_bin = (
+        root
+        / "bin"
+    )
+
+    environment = uv_environment(
+        {
+            "UV_TOOL_DIR": str(
+                tool_dir
+            ),
+            "UV_TOOL_BIN_DIR": str(
+                tool_bin
+            ),
+        }
+    )
+
+    log(
+        "UV",
+        "Installing JupyterLab",
+    )
+
+    run(
+        [
+            str(uv),
+            "tool",
+            "install",
+            "--force",
+            "jupyterlab",
+        ],
+        env=environment,
+    )
+
+    add_user_path(
+        tool_bin
+    )
+
+    candidates = [
+        (
+            tool_bin
+            / "jupyter-lab.exe"
+        ),
+        (
+            tool_bin
+            / "jupyter.exe"
+        ),
+    ]
+
+    for executable in candidates:
+        if executable.exists():
+            return verify(
+                [
+                    str(executable),
+                    "--version",
+                ],
+                env=environment,
+            )
+
+    raise RuntimeError(
+        "JupyterLab executable was not created"
+    )
+
+
+# =============================================================================
+# Git / editor / utilities
+# =============================================================================
 
 def install_git() -> str:
     filename, url = github_asset(
@@ -1156,12 +2215,12 @@ def install_git() -> str:
     )
 
     with tempfile.TemporaryDirectory(
-        prefix=".portable-installer-",
+        prefix=".installer-",
         dir=str(ROOT),
-    ) as temp_dir:
+    ) as temporary:
 
         temp = Path(
-            temp_dir
+            temporary
         )
 
         archive = download(
@@ -1174,7 +2233,9 @@ def install_git() -> str:
             / "git"
         )
 
-        extracted.mkdir()
+        extracted.mkdir(
+            parents=True
+        )
 
         log(
             "EXTRACT",
@@ -1197,8 +2258,10 @@ def install_git() -> str:
 
         if not required.exists():
             raise RuntimeError(
-                "PortableGit extraction failed: "
-                r"cmd\git.exe not found"
+                (
+                    "PortableGit extraction failed: "
+                    r"cmd\git.exe missing"
+                )
             )
 
         replace_tree(
@@ -1207,7 +2270,8 @@ def install_git() -> str:
         )
 
     add_user_path(
-        target / "cmd"
+        target
+        / "cmd"
     )
 
     return verify(
@@ -1242,8 +2306,8 @@ def install_gh() -> str:
     install_zip(
         url,
         target,
-        r"bin\gh.exe",
-        filename,
+        required=r"bin\gh.exe",
+        archive_name=filename,
     )
 
     add_user_path(
@@ -1263,21 +2327,217 @@ def install_gh() -> str:
     )
 
 
+def install_vscode() -> str:
+    target = (
+        ROOT
+        / "VisualCode"
+    )
+
+    url = (
+        "https://update.code.visualstudio.com/"
+        "latest/win32-x64-archive/stable"
+    )
+
+    install_zip(
+        url,
+        target,
+        required="Code.exe",
+        archive_name="vscode.zip",
+        preserve=(
+            "data",
+        ),
+    )
+
+    (
+        target
+        / "data"
+    ).mkdir(
+        exist_ok=True
+    )
+
+    add_user_path(
+        target,
+        target / "bin",
+    )
+
+    return verify(
+        [
+            str(
+                target
+                / "bin"
+                / "code.cmd"
+            ),
+            "--version",
+        ]
+    )
+
+
+def install_notepad() -> str:
+    filename, url = github_asset(
+        "notepad-plus-plus/notepad-plus-plus",
+        lambda name: bool(
+            re.search(
+                r"portable\.x64\.zip$",
+                name,
+                re.IGNORECASE,
+            )
+        ),
+    )
+
+    target = (
+        ROOT
+        / "notepadpp"
+    )
+
+    install_zip(
+        url,
+        target,
+        required="notepad++.exe",
+        archive_name=filename,
+    )
+
+    add_user_path(
+        target
+    )
+
+    return "notepad++.exe ready"
+
+
+def wget_asset_score(
+    name: str,
+) -> int:
+
+    value = name.lower()
+
+    if not value.endswith(
+        ".exe"
+    ):
+        return 0
+
+    if "wget" not in value:
+        return 0
+
+    if any(
+        token in value
+        for token in (
+            "debug",
+            "arm",
+            "aarch",
+            "x86",
+            "32",
+        )
+    ):
+        return 0
+
+    score = 10
+
+    if "x64" in value:
+        score += 100
+
+    if "amd64" in value:
+        score += 100
+
+    if value == "wget.exe":
+        score += 20
+
+    return score
+
+
+def install_wget() -> str:
+    filename, url = (
+        github_asset_best(
+            "KnugiHK/wget-on-windows",
+            wget_asset_score,
+        )
+    )
+
+    target = (
+        ROOT
+        / "wget"
+        / "wget.exe"
+    )
+
+    install_single_file(
+        url,
+        target,
+        filename=filename,
+    )
+
+    add_user_path(
+        target.parent
+    )
+
+    return verify(
+        [
+            str(target),
+            "--version",
+        ]
+    )
+
+
+# =============================================================================
+# Database
+# =============================================================================
+
+def install_mysql() -> str:
+    version, filename, url = (
+        mysql_source()
+    )
+
+    target = (
+        ROOT
+        / "mysql"
+    )
+
+    install_zip(
+        url,
+        target,
+        required=r"bin\mysql.exe",
+        archive_name=filename,
+        preserve=(
+            "data",
+            "my.ini",
+        ),
+    )
+
+    add_user_path(
+        target
+        / "bin"
+    )
+
+    result = verify(
+        [
+            str(
+                target
+                / "bin"
+                / "mysql.exe"
+            ),
+            "--version",
+        ]
+    )
+
+    return (
+        f"{result} | {version}"
+    )
+
+
 def install_dbeaver() -> str:
     target = (
         ROOT
         / "dbeaver"
     )
 
+    url = (
+        "https://dbeaver.io/files/"
+        "dbeaver-ce-latest-win32."
+        "win32.x86_64.zip"
+    )
+
     install_zip(
-        (
-            "https://dbeaver.io/files/"
-            "dbeaver-ce-latest-win32."
-            "win32.x86_64.zip"
-        ),
+        url,
         target,
-        "dbeaver.exe",
-        "dbeaver.zip",
+        required="dbeaver.exe",
+        archive_name="dbeaver.zip",
         preserve=(
             "configuration",
         ),
@@ -1303,8 +2563,8 @@ def install_xampp() -> str:
     install_zip(
         url,
         target,
-        "xampp-control.exe",
-        filename,
+        required="xampp-control.exe",
+        archive_name=filename,
         preserve=(
             "htdocs",
             "mysql/data",
@@ -1323,589 +2583,1223 @@ def install_xampp() -> str:
 
 
 # =============================================================================
-# Node / npm CLI tools
+# Cloud / platform
 # =============================================================================
 
-def locate_npm() -> Path:
-    portable_npm = (
+def install_gcloud() -> str:
+    target = (
         ROOT
-        / "node"
-        / "npm.cmd"
+        / "google-cloud"
     )
 
-    if portable_npm.exists():
-        return portable_npm
-
-    found = (
-        shutil.which("npm.cmd")
-        or shutil.which("npm")
+    url = (
+        "https://dl.google.com/dl/"
+        "cloudsdk/channels/rapid/"
+        "google-cloud-sdk.zip"
     )
 
-    if found:
-        return Path(found)
-
-    log(
-        "DEPEND",
-        "Node.js is required. "
-        "Installing Node.js LTS first.",
+    install_zip(
+        url,
+        target,
+        required=r"bin\gcloud.cmd",
+        archive_name="google-cloud-sdk.zip",
     )
 
-    install_node()
+    add_user_path(
+        target
+        / "bin"
+    )
 
-    if portable_npm.exists():
-        return portable_npm
-
-    raise RuntimeError(
-        "npm was not found after Node.js installation"
+    return verify(
+        [
+            str(
+                target
+                / "bin"
+                / "gcloud.cmd"
+            ),
+            "--version",
+        ]
     )
 
 
-def install_npm_tool(
-    package: str,
-    folder: str,
-    command: str,
-) -> str:
+def install_cloudflared() -> str:
+    filename, url = github_asset(
+        "cloudflare/cloudflared",
+        lambda name: (
+            name.lower()
+            == "cloudflared-windows-amd64.exe"
+        ),
+    )
 
     target = (
         ROOT
-        / folder
+        / "cloudflared"
+        / "cloudflared.exe"
     )
 
-    target.mkdir(
-        parents=True,
-        exist_ok=True,
+    install_single_file(
+        url,
+        target,
+        filename=filename,
     )
 
-    npm = locate_npm()
-
-    log(
-        "NPM",
-        f"Installing {package}",
+    add_user_path(
+        target.parent
     )
 
-    run(
+    return verify(
         [
-            str(npm),
-            "install",
-            "-g",
-            "--prefix",
             str(target),
-            package,
+            "--version",
         ]
+    )
+
+
+def install_supabase() -> str:
+    filename, url = github_asset(
+        "supabase/cli",
+        lambda name: bool(
+            re.search(
+                r"_windows_amd64\.tar\.gz$",
+                name,
+                re.IGNORECASE,
+            )
+        ),
+    )
+
+    target = (
+        ROOT
+        / "supabase"
+    )
+
+    install_tar(
+        url,
+        target,
+        required="supabase.exe",
+        archive_name=filename,
     )
 
     add_user_path(
         target
     )
 
-    candidates = [
-        target / f"{command}.cmd",
-        target / f"{command}.exe",
-    ]
-
-    for executable in candidates:
-        if executable.exists():
-            return verify(
-                [
-                    str(executable),
-                    "--version",
-                ]
-            )
-
-    raise RuntimeError(
-        f"{command} executable was not created"
-    )
-
-
-def install_codex() -> str:
-    return install_npm_tool(
-        "@openai/codex@latest",
-        "codex",
-        "codex",
-    )
-
-
-def install_claude() -> str:
-    return install_npm_tool(
-        "@anthropic-ai/claude-code@latest",
-        "claude",
-        "claude",
+    return verify(
+        [
+            str(
+                target
+                / "supabase.exe"
+            ),
+            "--version",
+        ]
     )
 
 
 # =============================================================================
-# Installation state
+# Program model
 # =============================================================================
 
-def exists(
-    relative_path: str,
-) -> bool:
-    return (
-        ROOT
-        / relative_path
-    ).exists()
+class Priority(Enum):
+    CORE = "CORE"
+    RECOMMENDED = "REC"
+    OPTIONAL = "OPT"
 
 
 @dataclass(frozen=True)
 class Program:
+    id: str
     name: str
     description: str
+    ecosystem: str
+    priority: Priority
     installer: Callable[[], str]
     installed: Callable[[], bool]
-    dependency_priority: int = 100
+    dependencies: tuple[str, ...] = ()
+
+
+ECOSYSTEM_ORDER = [
+    "Foundation",
+    "JavaScript / TypeScript",
+    "AI Developer CLI",
+    "Python / Data",
+    "Database",
+    "Cloud / Platform",
+    "Utilities",
+]
+
+
+def exists(
+    relative: str,
+) -> bool:
+
+    return (
+        ROOT
+        / relative
+    ).exists()
 
 
 PROGRAMS: list[Program] = [
+    # -------------------------------------------------------------------------
+    # Foundation
+    # -------------------------------------------------------------------------
+
     Program(
-        name="MySQL",
-        description="MySQL Server ZIP",
-        installer=install_mysql,
-        installed=lambda: exists(
-            r"mysql\bin\mysql.exe"
-        ),
-    ),
-    Program(
-        name="Notepad++",
-        description="Portable x64",
-        installer=install_notepad,
-        installed=lambda: exists(
-            r"notepadpp\notepad++.exe"
-        ),
-    ),
-    Program(
-        name="Codex CLI",
-        description="OpenAI Codex CLI",
-        installer=install_codex,
-        installed=lambda: (
-            exists(r"codex\codex.cmd")
-            or exists(r"codex\codex.exe")
-        ),
-        dependency_priority=20,
-    ),
-    Program(
-        name="Claude Code",
-        description="Anthropic Claude Code",
-        installer=install_claude,
-        installed=lambda: (
-            exists(r"claude\claude.cmd")
-            or exists(r"claude\claude.exe")
-        ),
-        dependency_priority=20,
-    ),
-    Program(
-        name="Visual Studio Code",
-        description="Portable ZIP mode",
-        installer=install_vscode,
-        installed=lambda: exists(
-            r"VisualCode\Code.exe"
-        ),
-    ),
-    Program(
+        id="git",
         name="Git",
-        description="PortableGit x64",
+        description="Version control",
+        ecosystem="Foundation",
+        priority=Priority.CORE,
         installer=install_git,
         installed=lambda: exists(
             r"git\cmd\git.exe"
         ),
     ),
+
     Program(
-        name="GitHub CLI (gh)",
-        description="Official GitHub CLI",
+        id="gh",
+        name="GitHub CLI",
+        description="GitHub from terminal",
+        ecosystem="Foundation",
+        priority=Priority.RECOMMENDED,
         installer=install_gh,
         installed=lambda: exists(
             r"github\bin\gh.exe"
         ),
+        dependencies=(
+            "git",
+        ),
     ),
+
     Program(
+        id="vscode",
+        name="Visual Studio Code",
+        description="Code editor",
+        ecosystem="Foundation",
+        priority=Priority.CORE,
+        installer=install_vscode,
+        installed=lambda: exists(
+            r"VisualCode\Code.exe"
+        ),
+    ),
+
+    # -------------------------------------------------------------------------
+    # JavaScript / TypeScript
+    # -------------------------------------------------------------------------
+
+    Program(
+        id="node",
+        name="Node.js LTS",
+        description="Node + npm + npx",
+        ecosystem="JavaScript / TypeScript",
+        priority=Priority.CORE,
+        installer=install_node,
+        installed=lambda: exists(
+            r"node\node.exe"
+        ),
+    ),
+
+    Program(
+        id="pnpm",
+        name="pnpm",
+        description="Fast package manager",
+        ecosystem="JavaScript / TypeScript",
+        priority=Priority.RECOMMENDED,
+        installer=install_pnpm,
+        installed=lambda: exists(
+            r"pnpm\pnpm.exe"
+        ),
+        dependencies=(
+            "node",
+        ),
+    ),
+
+    Program(
+        id="bun",
+        name="Bun",
+        description="JS runtime + toolkit",
+        ecosystem="JavaScript / TypeScript",
+        priority=Priority.RECOMMENDED,
+        installer=install_bun,
+        installed=lambda: exists(
+            r"bun\bun.exe"
+        ),
+    ),
+
+    Program(
+        id="yarn",
+        name="Yarn",
+        description="Package manager",
+        ecosystem="JavaScript / TypeScript",
+        priority=Priority.OPTIONAL,
+        installer=install_yarn,
+        installed=lambda: exists(
+            r"yarn\yarn.cmd"
+        ),
+        dependencies=(
+            "node",
+        ),
+    ),
+
+    # -------------------------------------------------------------------------
+    # AI Developer CLI
+    # -------------------------------------------------------------------------
+
+    Program(
+        id="codex",
+        name="Codex CLI",
+        description="OpenAI coding agent",
+        ecosystem="AI Developer CLI",
+        priority=Priority.RECOMMENDED,
+        installer=install_codex,
+        installed=lambda: (
+            exists(
+                r"codex\codex.cmd"
+            )
+            or exists(
+                r"codex\codex.exe"
+            )
+        ),
+        dependencies=(
+            "node",
+        ),
+    ),
+
+    Program(
+        id="claude",
+        name="Claude Code",
+        description="Anthropic coding agent",
+        ecosystem="AI Developer CLI",
+        priority=Priority.RECOMMENDED,
+        installer=install_claude,
+        installed=lambda: (
+            exists(
+                r"claude\claude.cmd"
+            )
+            or exists(
+                r"claude\claude.exe"
+            )
+        ),
+        dependencies=(
+            "node",
+        ),
+    ),
+
+    # -------------------------------------------------------------------------
+    # Python / Data
+    # -------------------------------------------------------------------------
+
+    Program(
+        id="uv",
+        name="uv",
+        description="Python package manager",
+        ecosystem="Python / Data",
+        priority=Priority.CORE,
+        installer=install_uv,
+        installed=lambda: exists(
+            r"uv\uv.exe"
+        ),
+    ),
+
+    Program(
+        id="python",
+        name="Python Portable",
+        description="Managed CPython",
+        ecosystem="Python / Data",
+        priority=Priority.CORE,
+        installer=install_python_portable,
+        installed=lambda: exists(
+            r"python\bin\python.exe"
+        ),
+        dependencies=(
+            "uv",
+        ),
+    ),
+
+    Program(
+        id="pipx",
+        name="pipx",
+        description="Isolated Python CLI apps",
+        ecosystem="Python / Data",
+        priority=Priority.OPTIONAL,
+        installer=install_pipx,
+        installed=lambda: exists(
+            r"pipx\bin\pipx.exe"
+        ),
+        dependencies=(
+            "uv",
+            "python",
+        ),
+    ),
+
+    Program(
+        id="jupyter",
+        name="JupyterLab",
+        description="Notebook + data IDE",
+        ecosystem="Python / Data",
+        priority=Priority.RECOMMENDED,
+        installer=install_jupyterlab,
+        installed=lambda: exists(
+            r"jupyterlab\bin\jupyter-lab.exe"
+        ),
+        dependencies=(
+            "uv",
+            "python",
+        ),
+    ),
+
+    # -------------------------------------------------------------------------
+    # Database
+    # -------------------------------------------------------------------------
+
+    Program(
+        id="mysql",
+        name="MySQL",
+        description="Database server binaries",
+        ecosystem="Database",
+        priority=Priority.RECOMMENDED,
+        installer=install_mysql,
+        installed=lambda: exists(
+            r"mysql\bin\mysql.exe"
+        ),
+    ),
+
+    Program(
+        id="dbeaver",
         name="DBeaver Community",
-        description="Database client",
+        description="Database GUI",
+        ecosystem="Database",
+        priority=Priority.RECOMMENDED,
         installer=install_dbeaver,
         installed=lambda: exists(
             r"dbeaver\dbeaver.exe"
         ),
     ),
+
     Program(
+        id="xampp",
         name="XAMPP",
-        description="Portable web stack",
+        description="Apache + PHP + MariaDB",
+        ecosystem="Database",
+        priority=Priority.OPTIONAL,
         installer=install_xampp,
         installed=lambda: exists(
             r"xampp\xampp-control.exe"
         ),
     ),
+
+    # -------------------------------------------------------------------------
+    # Cloud / Platform
+    # -------------------------------------------------------------------------
+
     Program(
-        name="Node.js LTS",
-        description="Node + npm + npx",
-        installer=install_node,
+        id="gcloud",
+        name="Google Cloud CLI",
+        description="GCP command line",
+        ecosystem="Cloud / Platform",
+        priority=Priority.RECOMMENDED,
+        installer=install_gcloud,
         installed=lambda: exists(
-            r"node\node.exe"
+            r"google-cloud\bin\gcloud.cmd"
         ),
-        dependency_priority=10,
+    ),
+
+    Program(
+        id="cloudflared",
+        name="cloudflared",
+        description="Cloudflare Tunnel",
+        ecosystem="Cloud / Platform",
+        priority=Priority.RECOMMENDED,
+        installer=install_cloudflared,
+        installed=lambda: exists(
+            r"cloudflared\cloudflared.exe"
+        ),
+    ),
+
+    Program(
+        id="supabase",
+        name="Supabase CLI",
+        description="Supabase development CLI",
+        ecosystem="Cloud / Platform",
+        priority=Priority.RECOMMENDED,
+        installer=install_supabase,
+        installed=lambda: exists(
+            r"supabase\supabase.exe"
+        ),
+    ),
+
+    # -------------------------------------------------------------------------
+    # Utilities
+    # -------------------------------------------------------------------------
+
+    Program(
+        id="notepad",
+        name="Notepad++",
+        description="Lightweight editor",
+        ecosystem="Utilities",
+        priority=Priority.OPTIONAL,
+        installer=install_notepad,
+        installed=lambda: exists(
+            r"notepadpp\notepad++.exe"
+        ),
+    ),
+
+    Program(
+        id="wget",
+        name="wget",
+        description="CLI downloader",
+        ecosystem="Utilities",
+        priority=Priority.OPTIONAL,
+        installer=install_wget,
+        installed=lambda: exists(
+            r"wget\wget.exe"
+        ),
     ),
 ]
 
 
+PROGRAM_BY_ID = {
+    program.id: program
+    for program in PROGRAMS
+}
+
+
 # =============================================================================
-# Professional interactive menu
+# Menu model
 # =============================================================================
 
-def menu_frame(
-    cursor: int,
-    selected: set[int],
+INSTALL_TARGET = "__INSTALL__"
+
+
+@dataclass
+class MenuRow:
+    text: str
+    target: str | None = None
+
+
+def priority_style(
+    priority: Priority,
+    enabled: bool,
+) -> str:
+
+    if priority == Priority.CORE:
+        return style(
+            "CORE",
+            BOLD + GREEN,
+            enabled,
+        )
+
+    if priority == Priority.RECOMMENDED:
+        return style(
+            "REC ",
+            CYAN,
+            enabled,
+        )
+
+    return style(
+        "OPT ",
+        DIM,
+        enabled,
+    )
+
+
+def status_style(
+    installed: bool,
+    enabled: bool,
+) -> str:
+
+    if installed:
+        return style(
+            "INSTALLED",
+            GREEN,
+            enabled,
+        )
+
+    return style(
+        "AVAILABLE",
+        DIM,
+        enabled,
+    )
+
+
+def build_menu_rows(
+    active: str,
+    selected: set[str],
     *,
     color: bool,
-) -> list[str]:
+) -> list[MenuRow]:
 
-    program_count = len(PROGRAMS)
+    rows: list[MenuRow] = []
 
-    title = styled(
-        APP_NAME,
-        BOLD + CYAN,
-        color,
-    )
+    first_group = True
 
-    separator = (
-        "=" * 78
-    )
-
-    selected_count = (
-        len(selected)
-    )
-
-    lines = [
-        separator,
-        f"  {title}   v{APP_VERSION}",
-        separator,
-        "",
-        (
-            "  Install root : "
-            f"{ROOT}"
-        ),
-        "",
-        (
-            "  UP/DOWN  Move     "
-            "SPACE  Toggle     "
-            "ENTER  Select/Install"
-        ),
-        (
-            "  A        Select all     "
-            "C      Clear      "
-            "Q      Quit"
-        ),
-        "",
-        (
-            "  "
-            + styled(
-                f"Selected: {selected_count}",
-                BOLD,
-                color,
-            )
-        ),
-        "",
-    ]
-
-    for index, program in enumerate(
-        PROGRAMS
-    ):
-        active = (
-            index == cursor
-        )
-
-        checked = (
-            index in selected
-        )
-
-        pointer = (
-            ">"
-            if active
-            else " "
-        )
-
-        checkbox = (
-            "[x]"
-            if checked
-            else "[ ]"
-        )
-
-        if program.installed():
-            status = styled(
-                "INSTALLED",
-                GREEN,
-                color,
-            )
-        else:
-            status = styled(
-                "READY",
-                DIM,
-                color,
-            )
-
-        name = (
-            f"{program.name:<23}"
-        )
-
-        description = (
-            f"{program.description:<25}"
-        )
-
-        line = (
-            f" {pointer} "
-            f"{checkbox} "
-            f"{name} "
-            f"{description} "
-            f"{status}"
-        )
-
-        if active:
-            line = styled(
-                line,
-                BOLD + CYAN,
-                color,
-            )
-
-        lines.append(
-            line
-        )
-
-    lines.extend(
-        [
-            "",
+    for ecosystem in ECOSYSTEM_ORDER:
+        programs = [
+            program
+            for program in PROGRAMS
+            if program.ecosystem
+            == ecosystem
         ]
+
+        if not programs:
+            continue
+
+        if not first_group:
+            rows.append(
+                MenuRow("")
+            )
+
+        first_group = False
+
+        rows.append(
+            MenuRow(
+                style(
+                    f"  {ecosystem}",
+                    BOLD + MAGENTA,
+                    color,
+                )
+            )
+        )
+
+        for program in programs:
+            is_active = (
+                program.id
+                == active
+            )
+
+            is_selected = (
+                program.id
+                in selected
+            )
+
+            pointer = (
+                ">"
+                if is_active
+                else " "
+            )
+
+            checkbox = (
+                "[x]"
+                if is_selected
+                else "[ ]"
+            )
+
+            priority = priority_style(
+                program.priority,
+                color,
+            )
+
+            status = status_style(
+                program.installed(),
+                color,
+            )
+
+            text = (
+                f" {pointer} {checkbox} "
+                f"[{priority}] "
+                f"{program.name:<22} "
+                f"{program.description:<27} "
+                f"{status}"
+            )
+
+            if is_active:
+                text = style(
+                    text,
+                    BOLD + CYAN,
+                    color,
+                )
+
+            rows.append(
+                MenuRow(
+                    text=text,
+                    target=program.id,
+                )
+            )
+
+    rows.append(
+        MenuRow("")
     )
 
     install_active = (
-        cursor == program_count
+        active
+        == INSTALL_TARGET
     )
 
     install_text = (
         f"[ INSTALL SELECTED : "
-        f"{selected_count} ]"
+        f"{len(selected)} ]"
     )
 
-    if not selected:
-        install_text = (
-            "[ INSTALL SELECTED : 0 ]"
-        )
-
-    install_line = (
+    prefix = (
         " > "
         if install_active
         else "   "
-    ) + install_text
-
-    if install_active:
-        if selected:
-            install_line = styled(
-                install_line,
-                BOLD + GREEN,
-                color,
-            )
-        else:
-            install_line = styled(
-                install_line,
-                BOLD + YELLOW,
-                color,
-            )
-
-    lines.append(
-        install_line
     )
 
-    lines.extend(
+    if install_active:
+        code = (
+            BOLD + GREEN
+            if selected
+            else BOLD + YELLOW
+        )
+
+        install_text = style(
+            prefix + install_text,
+            code,
+            color,
+        )
+
+    else:
+        install_text = (
+            prefix
+            + install_text
+        )
+
+    rows.append(
+        MenuRow(
+            text=install_text,
+            target=INSTALL_TARGET,
+        )
+    )
+
+    return rows
+
+
+def render_menu(
+    active: str,
+    selected: set[str],
+    scroll: int,
+    *,
+    color: bool,
+) -> tuple[list[str], int]:
+
+    terminal = shutil.get_terminal_size(
+        fallback=(120, 40)
+    )
+
+    terminal_height = max(
+        terminal.lines,
+        20,
+    )
+
+    rows = build_menu_rows(
+        active,
+        selected,
+        color=color,
+    )
+
+    active_row = 0
+
+    for index, row in enumerate(
+        rows
+    ):
+        if row.target == active:
+            active_row = index
+            break
+
+    header = [
+        "=" * 92,
+        (
+            "  "
+            + style(
+                APP_NAME,
+                BOLD + CYAN,
+                color,
+            )
+            + f"   v{APP_VERSION}"
+        ),
+        "=" * 92,
+        (
+            f"  Root      : {ROOT}"
+        ),
+        (
+            "  Navigation: "
+            "UP/DOWN Move   "
+            "ENTER Select   "
+            "SPACE Toggle   "
+            "I Install"
+        ),
+        (
+            "  Presets   : "
+            "E Core   "
+            "R Recommended   "
+            "O Optional   "
+            "A All   "
+            "C Clear"
+        ),
+        (
+            "  Exit      : "
+            "Q / ESC / CTRL+C"
+        ),
+        "",
+    ]
+
+    footer_height = 4
+
+    available_body = max(
+        6,
+        terminal_height
+        - len(header)
+        - footer_height,
+    )
+
+    margin = 2
+
+    if active_row < (
+        scroll + margin
+    ):
+        scroll = max(
+            0,
+            active_row - margin,
+        )
+
+    if active_row >= (
+        scroll
+        + available_body
+        - margin
+    ):
+        scroll = (
+            active_row
+            - available_body
+            + margin
+            + 1
+        )
+
+    max_scroll = max(
+        0,
+        len(rows)
+        - available_body,
+    )
+
+    scroll = max(
+        0,
+        min(
+            scroll,
+            max_scroll,
+        ),
+    )
+
+    visible = rows[
+        scroll:
+        scroll + available_body
+    ]
+
+    body = [
+        row.text
+        for row in visible
+    ]
+
+    while len(body) < available_body:
+        body.append("")
+
+    above = (
+        scroll > 0
+    )
+
+    below = (
+        scroll
+        + available_body
+        < len(rows)
+    )
+
+    scroll_status = ""
+
+    if above and below:
+        scroll_status = (
+            "More items above / below"
+        )
+
+    elif above:
+        scroll_status = (
+            "More items above"
+        )
+
+    elif below:
+        scroll_status = (
+            "More items below"
+        )
+
+    selected_status = (
+        f"Selected: {len(selected)}"
+    )
+
+    footer = [
+        "",
+        "-" * 92,
+        (
+            f"  {selected_status:<20}"
+            f"{scroll_status}"
+        ),
+        "-" * 92,
+    ]
+
+    return (
+        header
+        + body
+        + footer,
+        scroll,
+    )
+
+
+# =============================================================================
+# Interactive menu
+# =============================================================================
+
+def selectable_targets() -> list[str]:
+    return (
         [
-            "",
-            separator,
-            (
-                "  Existing installations are marked "
-                "INSTALLED. Selecting one again updates it."
-            ),
-            separator,
+            program.id
+            for program in PROGRAMS
+        ]
+        + [
+            INSTALL_TARGET
         ]
     )
 
-    return lines
+
+def select_priority(
+    selected: set[str],
+    priority: Priority,
+) -> set[str]:
+
+    result = set(
+        selected
+    )
+
+    for program in PROGRAMS:
+        if (
+            program.priority
+            == priority
+        ):
+            result.add(
+                program.id
+            )
+
+    return result
 
 
-def interactive_menu() -> list[int]:
+def interactive_menu() -> list[str]:
     import msvcrt
 
+    targets = (
+        selectable_targets()
+    )
+
     cursor = 0
-    selected: set[int] = set()
-
-    program_count = (
-        len(PROGRAMS)
-    )
-
-    install_row = (
-        program_count
-    )
+    selected: set[str] = set()
+    scroll = 0
 
     with TerminalRenderer() as terminal:
-
         while True:
-            terminal.paint(
-                menu_frame(
-                    cursor,
+            active = (
+                targets[cursor]
+            )
+
+            frame, scroll = (
+                render_menu(
+                    active,
                     selected,
+                    scroll,
                     color=terminal.ansi,
                 )
+            )
+
+            terminal.paint(
+                frame
             )
 
             key = (
                 msvcrt.getwch()
             )
 
-            #
-            # Arrow / navigation keys
-            #
+            # -------------------------------------------------------------
+            # CTRL+C
+            # -------------------------------------------------------------
+
+            if key == "\x03":
+                raise KeyboardInterrupt
+
+            # -------------------------------------------------------------
+            # Extended keys
+            # -------------------------------------------------------------
 
             if key in {
                 "\x00",
                 "\xe0",
             }:
-                key2 = (
+                extended = (
                     msvcrt.getwch()
                 )
 
                 # Up
-                if key2 == "H":
+                if extended == "H":
                     cursor = (
                         cursor - 1
-                    ) % (
-                        program_count + 1
+                    ) % len(
+                        targets
                     )
 
                 # Down
-                elif key2 == "P":
+                elif extended == "P":
                     cursor = (
                         cursor + 1
-                    ) % (
-                        program_count + 1
+                    ) % len(
+                        targets
                     )
 
                 # Home
-                elif key2 == "G":
+                elif extended == "G":
                     cursor = 0
 
                 # End
-                elif key2 == "O":
+                elif extended == "O":
                     cursor = (
-                        install_row
+                        len(targets)
+                        - 1
+                    )
+
+                # Page Up
+                elif extended == "I":
+                    cursor = max(
+                        0,
+                        cursor - 5,
+                    )
+
+                # Page Down
+                elif extended == "Q":
+                    cursor = min(
+                        len(targets) - 1,
+                        cursor + 5,
                     )
 
                 continue
 
-            #
-            # Quit
-            #
+            # -------------------------------------------------------------
+            # Exit
+            # -------------------------------------------------------------
 
-            if key.lower() == "q":
+            if (
+                key.lower() == "q"
+                or key == "\x1b"
+            ):
                 raise KeyboardInterrupt
 
-            #
-            # Select all
-            #
+            # -------------------------------------------------------------
+            # Presets
+            # -------------------------------------------------------------
 
-            if key.lower() == "a":
-                selected = set(
-                    range(
-                        program_count
-                    )
+            if key.lower() == "e":
+                selected = select_priority(
+                    selected,
+                    Priority.CORE,
                 )
                 continue
 
-            #
-            # Clear selection
-            #
+            if key.lower() == "r":
+                selected = select_priority(
+                    selected,
+                    Priority.RECOMMENDED,
+                )
+                continue
+
+            if key.lower() == "o":
+                selected = select_priority(
+                    selected,
+                    Priority.OPTIONAL,
+                )
+                continue
+
+            if key.lower() == "a":
+                selected = {
+                    program.id
+                    for program
+                    in PROGRAMS
+                }
+                continue
 
             if key.lower() == "c":
                 selected.clear()
                 continue
 
-            #
-            # Space toggles without moving cursor
-            #
+            # -------------------------------------------------------------
+            # Jump to Install
+            # -------------------------------------------------------------
 
-            if (
-                key == " "
-                and cursor < program_count
-            ):
-                if cursor in selected:
-                    selected.remove(
-                        cursor
-                    )
-                else:
-                    selected.add(
-                        cursor
-                    )
-
+            if key.lower() == "i":
+                cursor = (
+                    len(targets)
+                    - 1
+                )
                 continue
 
-            #
-            # ENTER:
-            #
-            # - on program => toggle + move down
-            # - on install => begin installation
-            #
+            # -------------------------------------------------------------
+            # SPACE
+            # -------------------------------------------------------------
 
-            if key == "\r":
-                if cursor < program_count:
-                    if cursor in selected:
+            if key == " ":
+                if (
+                    active
+                    != INSTALL_TARGET
+                ):
+                    if active in selected:
                         selected.remove(
-                            cursor
+                            active
                         )
                     else:
                         selected.add(
-                            cursor
+                            active
                         )
 
-                    cursor = min(
-                        cursor + 1,
-                        install_row,
-                    )
+                continue
+
+            # -------------------------------------------------------------
+            # ENTER
+            # -------------------------------------------------------------
+
+            if key == "\r":
+                if (
+                    active
+                    == INSTALL_TARGET
+                ):
+                    if selected:
+                        return [
+                            program.id
+                            for program
+                            in PROGRAMS
+                            if program.id
+                            in selected
+                        ]
 
                     continue
 
-                if (
-                    cursor == install_row
-                    and selected
-                ):
-                    return sorted(
-                        selected
+                if active in selected:
+                    selected.remove(
+                        active
+                    )
+                else:
+                    selected.add(
+                        active
                     )
 
+                cursor = min(
+                    cursor + 1,
+                    len(targets) - 1,
+                )
+
 
 # =============================================================================
-# Installation execution
+# Dependency planner
 # =============================================================================
 
-def build_install_plan(
-    indices: list[int],
-) -> list[int]:
+def resolve_install_plan(
+    selected: list[str],
+) -> tuple[
+    list[str],
+    set[str],
+]:
 
-    selected = list(
-        indices
+    requested = set(
+        selected
     )
 
-    #
-    # Node is a dependency of Codex and Claude.
-    # If Node itself is selected, run it first.
-    #
+    plan: list[str] = []
+    visiting: set[str] = set()
+    visited: set[str] = set()
 
-    return sorted(
-        selected,
-        key=lambda index: (
-            PROGRAMS[index].dependency_priority,
-            index,
-        ),
+    def visit(
+        program_id: str,
+    ) -> None:
+
+        if program_id in visited:
+            return
+
+        if program_id in visiting:
+            raise RuntimeError(
+                (
+                    "Circular dependency detected: "
+                    f"{program_id}"
+                )
+            )
+
+        program = PROGRAM_BY_ID[
+            program_id
+        ]
+
+        visiting.add(
+            program_id
+        )
+
+        for dependency_id in (
+            program.dependencies
+        ):
+            dependency = PROGRAM_BY_ID[
+                dependency_id
+            ]
+
+            if (
+                dependency_id
+                not in requested
+                and dependency.installed()
+            ):
+                continue
+
+            visit(
+                dependency_id
+            )
+
+        visiting.remove(
+            program_id
+        )
+
+        visited.add(
+            program_id
+        )
+
+        plan.append(
+            program_id
+        )
+
+    for program_id in selected:
+        visit(
+            program_id
+        )
+
+    return (
+        plan,
+        requested,
     )
+
+
+# =============================================================================
+# Installer execution
+# =============================================================================
+
+@dataclass
+class InstallResult:
+    id: str
+    name: str
+    success: bool
+    status: str
+    detail: str
+    requested: bool
 
 
 def install_selected(
-    indices: list[int],
+    selected: list[str],
 ) -> int:
 
+    plan, requested = (
+        resolve_install_plan(
+            selected
+        )
+    )
+
+    results: list[
+        InstallResult
+    ] = []
+
+    failed_ids: set[str] = set()
+
     print(
-        "=" * 78
+        "=" * 92
     )
 
     print(
@@ -1913,43 +3807,92 @@ def install_selected(
     )
 
     print(
-        "=" * 78
+        "=" * 92
     )
 
     print(
         f"Install root : {ROOT}"
     )
 
-    print()
-
-    plan = build_install_plan(
-        indices
+    print(
+        f"Requested    : {len(requested)}"
     )
 
-    results: list[
-        tuple[str, bool, str]
-    ] = []
+    print(
+        f"Install plan : {len(plan)}"
+    )
 
-    for position, index in enumerate(
+    print()
+
+    for position, program_id in enumerate(
         plan,
         start=1,
     ):
-        program = (
-            PROGRAMS[index]
+        program = PROGRAM_BY_ID[
+            program_id
+        ]
+
+        dependency_failures = [
+            dependency
+            for dependency
+            in program.dependencies
+            if dependency
+            in failed_ids
+        ]
+
+        requested_text = (
+            "REQUESTED"
+            if program_id in requested
+            else "DEPENDENCY"
         )
 
         print(
-            "-" * 78
+            "-" * 92
         )
 
         print(
             f"[{position}/{len(plan)}] "
-            f"{program.name}"
+            f"{program.name} "
+            f"[{requested_text}]"
         )
 
         print(
-            "-" * 78
+            "-" * 92
         )
+
+        if dependency_failures:
+            detail = (
+                "Dependency failed: "
+                + ", ".join(
+                    dependency_failures
+                )
+            )
+
+            log(
+                "SKIPPED",
+                detail,
+            )
+
+            failed_ids.add(
+                program_id
+            )
+
+            results.append(
+                InstallResult(
+                    id=program_id,
+                    name=program.name,
+                    success=False,
+                    status="SKIPPED",
+                    detail=detail,
+                    requested=(
+                        program_id
+                        in requested
+                    ),
+                )
+            )
+
+            print()
+            continue
 
         try:
             result = (
@@ -1958,31 +3901,63 @@ def install_selected(
 
             log(
                 "SUCCESS",
-                f"{program.name}: {result}",
+                (
+                    f"{program.name}: "
+                    f"{result}"
+                ),
             )
 
             results.append(
-                (
-                    program.name,
-                    True,
-                    result,
+                InstallResult(
+                    id=program_id,
+                    name=program.name,
+                    success=True,
+                    status="OK",
+                    detail=result,
+                    requested=(
+                        program_id
+                        in requested
+                    ),
                 )
             )
 
         except KeyboardInterrupt:
+            print()
+
+            log(
+                "CANCELLED",
+                (
+                    "Installation interrupted "
+                    "by user"
+                ),
+            )
+
             raise
 
         except Exception as exc:
+            failed_ids.add(
+                program_id
+            )
+
             log(
                 "FAILED",
-                f"{program.name}: {exc}",
+                (
+                    f"{program.name}: "
+                    f"{exc}"
+                ),
             )
 
             results.append(
-                (
-                    program.name,
-                    False,
-                    str(exc),
+                InstallResult(
+                    id=program_id,
+                    name=program.name,
+                    success=False,
+                    status="FAILED",
+                    detail=str(exc),
+                    requested=(
+                        program_id
+                        in requested
+                    ),
                 )
             )
 
@@ -1990,63 +3965,78 @@ def install_selected(
 
     print()
     print(
-        "=" * 78
+        "=" * 92
     )
+
     print(
         "INSTALLATION SUMMARY"
     )
+
     print(
-        "=" * 78
+        "=" * 92
     )
 
-    failed = False
+    failures = 0
 
-    for name, success, details in results:
-        if success:
-            state = "OK"
-        else:
-            state = "FAILED"
-            failed = True
+    for result in results:
+        source = (
+            "requested"
+            if result.requested
+            else "dependency"
+        )
 
         print(
-            f"[{state:<6}] "
-            f"{name:<23} "
-            f"{details}"
+            f"[{result.status:<7}] "
+            f"{result.name:<24} "
+            f"{source:<10} "
+            f"{result.detail}"
         )
+
+        if not result.success:
+            failures += 1
 
     print()
     print(
-        "User PATH has been updated for "
-        "successful installations."
+        f"Successful : "
+        f"{len(results) - failures}"
     )
 
     print(
-        "The current installer process also "
-        "received the updated PATH."
+        f"Failed     : "
+        f"{failures}"
+    )
+
+    print(
+        f"Log        : "
+        f"{LOG_FILE}"
+    )
+
+    print()
+    print(
+        "User PATH has been updated permanently "
+        "for successfully installed tools."
     )
 
     print(
         "Open a new PowerShell window after "
-        "installation so all applications inherit it."
+        "installation to inherit the complete PATH."
     )
-
-    print()
 
     return (
         1
-        if failed
+        if failures
         else 0
     )
 
 
 # =============================================================================
-# Main
+# Environment validation
 # =============================================================================
 
 def validate_environment() -> None:
     if os.name != "nt":
         raise RuntimeError(
-            "This installer supports Windows only."
+            "Windows is required"
         )
 
     architecture = (
@@ -2060,22 +4050,31 @@ def validate_environment() -> None:
         "x64",
     }:
         raise RuntimeError(
-            "This installer currently supports "
-            "Windows x64 only. "
-            f"Detected architecture: "
-            f"{platform.machine()}"
+            (
+                "Windows x64 is required. "
+                f"Detected: "
+                f"{platform.machine()}"
+            )
         )
 
-    if sys.version_info < (3, 10):
+    if sys.version_info < (
+        3,
+        10,
+    ):
         raise RuntimeError(
-            "Python 3.10 or newer is required. "
-            f"Detected: {platform.python_version()}"
+            (
+                "Python 3.10+ is required. "
+                f"Detected: "
+                f"{platform.python_version()}"
+            )
         )
 
-    if not sys.stdout.isatty():
+    if not sys.stdin.isatty():
         raise RuntimeError(
-            "The installer must be run inside "
-            "an interactive terminal."
+            (
+                "Interactive terminal "
+                "is required"
+            )
         )
 
     ROOT.mkdir(
@@ -2083,6 +4082,10 @@ def validate_environment() -> None:
         exist_ok=True,
     )
 
+
+# =============================================================================
+# Main
+# =============================================================================
 
 def main() -> int:
     try:
@@ -2099,7 +4102,11 @@ def main() -> int:
     except KeyboardInterrupt:
         print()
         print(
-            "Installation cancelled."
+            "Cancelled safely."
+        )
+
+        LOGGER.info(
+            "User cancelled installer"
         )
 
         return 130
@@ -2108,6 +4115,10 @@ def main() -> int:
         print()
         print(
             f"[FATAL] {exc}"
+        )
+
+        LOGGER.exception(
+            "Fatal installer error"
         )
 
         return 1
