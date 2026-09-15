@@ -4,6 +4,12 @@ cd /d "%~dp0"
 title Portable Developer Environment
 
 rem ---------------------------------------------------------------------------
+rem Verify that this is a complete checkout before starting Python.
+rem ---------------------------------------------------------------------------
+call :ensure_layout
+if errorlevel 1 exit /b 1
+
+rem ---------------------------------------------------------------------------
 rem Friendly launcher: use an existing Python when available.
 rem ---------------------------------------------------------------------------
 where py >nul 2>nul
@@ -55,3 +61,48 @@ if not exist "%UV_EXE%" (
 "%UV_EXE%" run --no-project --python 3.13 python installer.py %*
 set "RC=%errorlevel%"
 exit /b %RC%
+
+
+:ensure_layout
+if exist "portable_installer\app.py" exit /b 0
+
+echo.
+echo ================================================================
+echo   Portable Developer Environment - incomplete installation files
+echo ================================================================
+echo.
+echo The required folder "portable_installer" is missing.
+echo The launcher and installer.py must be kept together with the full
+echo repository contents. Copying only Install.cmd and installer.py is
+echo not enough.
+echo.
+
+rem If this is a Git checkout and HEAD tracks the package, restore only the
+rem missing package. This is safe because this path is currently absent.
+where git >nul 2>nul
+if not errorlevel 1 if exist ".git" (
+    git ls-tree -r --name-only HEAD portable_installer 2>nul | findstr /b /c:"portable_installer/" >nul
+    if not errorlevel 1 (
+        echo Attempting to restore the missing package from the current Git commit...
+        git restore --source=HEAD --worktree -- portable_installer >nul 2>nul
+        if exist "portable_installer\app.py" (
+            echo Restore completed successfully.
+            echo.
+            exit /b 0
+        )
+    )
+)
+
+echo Please download or clone the complete repository.
+echo.
+echo If this is an existing clone, update it with:
+echo.
+echo   git fetch origin
+echo   git switch main
+echo   git pull origin main
+echo.
+echo Required file:
+echo   portable_installer\app.py
+echo.
+pause
+exit /b 1
