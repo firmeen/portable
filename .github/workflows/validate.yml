@@ -1,0 +1,27 @@
+name: Validate installer
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Compile source
+        run: python -m compileall -q installer.py portable_installer tests
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
