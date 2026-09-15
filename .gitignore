@@ -1,0 +1,19 @@
+# Installed portable applications
+software/
+
+# Runtime/cache/log data
+.cache/
+.bootstrap/
+logs/
+installer.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
