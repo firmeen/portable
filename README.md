@@ -1,6 +1,6 @@
 # Portable Developer Environment
 
-ติดตั้งเครื่องมือ Developer ที่ใช้บ่อยบน **Windows 10/11 x64** จากหน้าจอเดียว โดยเน้นการติดตั้งแบบ **User / Portable** และตั้ง `PATH` ให้อัตโนมัติ จึงไม่ต้องเปิด PowerShell แบบ Administrator สำหรับการใช้งานปกติ
+ติดตั้งเครื่องมือ Developer ที่ใช้บ่อยบน **Windows 10/11 x64** จากหน้าจอเดียว โดยเน้นการติดตั้งแบบ **User / Portable** และตั้ง **User PATH แบบถาวร** ให้อัตโนมัติ จึงไม่ต้องเปิด PowerShell แบบ Administrator สำหรับการใช้งานปกติ
 
 > ถ้าไม่ใช่โปรแกรมเมอร์: ดาวน์โหลด repo แล้ว **ดับเบิลคลิก `Install.cmd`** ได้เลย
 
@@ -42,6 +42,15 @@
 | Recommended | GitHub CLI (`gh`) | ใช้งาน GitHub จาก Terminal |
 | Essential | Visual Studio Code | Code editor |
 
+### CLI Productivity
+
+| ระดับ | โปรแกรม | ใช้ทำอะไร |
+|---|---|---|
+| Recommended | PowerShell 7 (`pwsh`) | PowerShell รุ่นใหม่แบบ portable |
+| Essential | jq | อ่าน ค้นหา และแปลง JSON จาก CLI |
+| Essential | ripgrep (`rg`) | ค้นหาข้อความและ source code ความเร็วสูง |
+| Recommended | fzf | Fuzzy finder แบบ interactive |
+
 ### JavaScript / TypeScript
 
 | ระดับ | โปรแกรม | ใช้ทำอะไร |
@@ -73,6 +82,8 @@
 |---|---|---|
 | Recommended | MySQL | Database binaries |
 | Recommended | DBeaver Community | Database GUI |
+| Essential | SQLite CLI (`sqlite3`) | Embedded SQL database CLI |
+| Recommended | DuckDB CLI | SQL analytics สำหรับ CSV / Parquet / JSON |
 | Optional | XAMPP | Apache + PHP + MariaDB stack |
 
 ### Cloud / Platform
@@ -83,12 +94,62 @@
 | Recommended | cloudflared | Cloudflare Tunnel |
 | Recommended | Supabase CLI | Supabase development / project CLI |
 
+### DevOps / Infrastructure
+
+| ระดับ | โปรแกรม | ใช้ทำอะไร |
+|---|---|---|
+| Recommended | Terraform | Infrastructure as Code |
+| Recommended | kubectl | จัดการ Kubernetes cluster |
+| Recommended | Helm | Package manager สำหรับ Kubernetes |
+| Recommended | rclone | Copy / sync ไฟล์กับ Cloud และ Object Storage |
+
 ### Utilities
 
 | ระดับ | โปรแกรม | ใช้ทำอะไร |
 |---|---|---|
 | Optional | Notepad++ | Lightweight editor |
 | Optional | wget | Download จาก command line |
+
+## Permanent User PATH เป็นข้อบังคับของ Installer
+
+ทุกโปรแกรมใน Catalog ต้องประกาศตำแหน่ง PATH ของตัวเอง และหลังติดตั้งสำเร็จระบบจะตรวจว่าตำแหน่งนั้นมีอยู่จริงก่อนเพิ่มเข้า **User PATH แบบถาวร**
+
+ถ้าโปรแกรมติดตั้งเสร็จแต่ตำแหน่ง PATH ที่กำหนดไม่ถูกสร้าง ระบบจะถือว่ารายการนั้น **FAILED** แทนการรายงานว่าสำเร็จแบบไม่สมบูรณ์
+
+ระบบไม่แก้ `System PATH` โดยตรง และไม่ต้องใช้ Administrator สำหรับการติดตั้งปกติ
+
+หลังติดตั้งให้เปิด PowerShell ใหม่หนึ่งครั้ง แล้วสามารถเรียกใช้ได้โดยตรง เช่น:
+
+```powershell
+git --version
+gh --version
+code --version
+pwsh --version
+jq --version
+rg --version
+fzf --version
+node --version
+npm --version
+npx --version
+pnpm --version
+bun --version
+codex --version
+claude --version
+uv --version
+python --version
+jupyter-lab --version
+mysql --version
+sqlite3 --version
+duckdb --version
+gcloud --version
+cloudflared --version
+supabase --version
+terraform --version
+kubectl version --client
+helm version --short
+rclone version
+wget --version
+```
 
 ## Dependency จัดการให้อัตโนมัติ
 
@@ -121,29 +182,7 @@ portable/
 
 `software/`, `logs/`, `.cache/` และ `.bootstrap/` จะไม่ถูก commit เข้า Git
 
-## PATH แบบถาวร
-
-Installer เพิ่มเฉพาะ path ที่จำเป็นเข้า **User PATH** ไม่แก้ `System PATH` โดยตรง ตัวอย่างหลังติดตั้ง:
-
-```powershell
-git --version
-gh --version
-node --version
-npm --version
-npx --version
-pnpm --version
-bun --version
-code --version
-mysql --version
-uv --version
-python --version
-cloudflared --version
-supabase --version
-```
-
-หลังติดตั้งเสร็จ แนะนำให้เปิด PowerShell หน้าต่างใหม่หนึ่งครั้งเพื่อให้ทุกโปรแกรมรับ PATH ล่าสุด
-
-## ถ้าต้องการใช้ผ่าน PowerShell
+## ใช้ผ่าน PowerShell
 
 เปิดเมนูปกติ:
 
@@ -166,7 +205,7 @@ python .\installer.py --preset recommended --dry-run
 ติดตั้งโดยระบุชื่อ ID:
 
 ```powershell
-python .\installer.py --install git gh vscode node pnpm
+python .\installer.py --install jq ripgrep sqlite fzf duckdb powershell terraform kubectl helm rclone
 ```
 
 ติดตั้ง Recommended preset:
@@ -203,36 +242,43 @@ logs\installer.log
 
 ```text
 portable_installer/
-├─ app.py                 # application flow / CLI
-├─ catalog.py             # รายชื่อโปรแกรม + dependencies
+├─ app.py                 # application flow / CLI / permanent PATH enforcement
+├─ catalog.py             # รายชื่อโปรแกรม + dependencies + PATH contract
 ├─ config.py              # path/config กลาง
 ├─ models.py              # Program / Priority / Result
 ├─ ui.py                  # interactive terminal UI
 ├─ core/
 │  ├─ archive.py          # ZIP/TAR + atomic replacement
-│  ├─ environment.py      # User PATH / environment
+│  ├─ environment.py      # permanent User PATH / environment
 │  ├─ github.py           # GitHub release lookup
 │  ├─ http.py             # download + retry
 │  ├─ planner.py          # dependency resolution
 │  └─ process.py          # subprocess + verification
 └─ installers/
    ├─ foundation.py
+   ├─ productivity.py
    ├─ javascript.py
    ├─ python_data.py
+   ├─ data_tools.py
    ├─ database.py
    ├─ cloud.py
+   ├─ devops.py
    └─ utilities.py
 ```
 
-เวลาเพิ่มโปรแกรมใหม่ โดยทั่วไปแก้เพียง installer ของ ecosystem นั้น และเพิ่ม `Program(...)` ใน `catalog.py` เท่านั้น ไม่ต้องแก้ UI หรือ dependency engine
+เวลาเพิ่มโปรแกรมใหม่ ต้องกำหนด `path_entries` ใน `Program(...)` ด้วย หากไม่กำหนด Installer จะไม่ยอมเริ่มทำงาน เพื่อป้องกันโปรแกรมถูกติดตั้งแต่เรียกใช้จาก Terminal ไม่ได้
 
 ## Validation
 
-Pull Request จะมี GitHub Actions ตรวจอย่างน้อย:
+Pull Request มี GitHub Actions ตรวจอย่างน้อย:
 
 ```text
 Python compile check
-Unit tests for dependency planner
+Dependency planner unit tests
+Catalog uniqueness
+Required tool registration
+Permanent PATH contract for every program
+PATH traversal / absolute-path rejection
 ```
 
 รันเองได้ด้วย:
@@ -248,6 +294,7 @@ python -m unittest discover -s tests -v
 - ต้องใช้อินเทอร์เน็ตตอนดาวน์โหลดโปรแกรม
 - บาง feature ของโปรแกรมปลายทางอาจต้องใช้สิทธิ์เพิ่มเอง เช่น การติดตั้ง service ของ `cloudflared` หรือ service/database บางประเภท
 - Supabase CLI ใช้ได้โดยตรง แต่ local Supabase stack ยังต้องมี container runtime ที่รองรับ
+- `kubectl` และ `Helm` ติดตั้ง CLI ได้โดยไม่ต้อง Admin แต่การใช้งานจริงต้องมี Kubernetes cluster/context ที่เข้าถึงได้
 
 ---
 
