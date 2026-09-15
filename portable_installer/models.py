@@ -21,6 +21,7 @@ class Program:
     installer: Callable[[], str]
     installed: Callable[[], bool]
     dependencies: tuple[str, ...] = ()
+    path_entries: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
