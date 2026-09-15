@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 title Portable Developer Environment
 
@@ -9,13 +9,13 @@ rem ---------------------------------------------------------------------------
 where py >nul 2>nul
 if %errorlevel%==0 (
     py -3 installer.py %*
-    exit /b %errorlevel%
+    exit /b !errorlevel!
 )
 
 where python >nul 2>nul
 if %errorlevel%==0 (
     python installer.py %*
-    exit /b %errorlevel%
+    exit /b !errorlevel!
 )
 
 rem ---------------------------------------------------------------------------
