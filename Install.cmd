@@ -73,8 +73,8 @@ echo ================================================================
 echo.
 echo The required folder "portable_installer" is missing.
 echo The launcher and installer.py must be kept together with the full
-necho repository contents. Copying only Install.cmd and installer.py is
-necho not enough.
+echo repository contents. Copying only Install.cmd and installer.py is
+echo not enough.
 echo.
 
 rem If this is a Git checkout and HEAD tracks the package, restore only the
