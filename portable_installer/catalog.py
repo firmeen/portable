@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from .installers.cloud import install_cloudflared, install_gcloud, install_supabase
 from .installers.common import exists
+from .installers.data_tools import install_duckdb, install_sqlite
 from .installers.database import install_dbeaver, install_mysql, install_xampp
+from .installers.devops import install_helm, install_kubectl, install_rclone, install_terraform
 from .installers.foundation import install_gh, install_git, install_vscode
 from .installers.javascript import (
     install_bun,
@@ -11,6 +13,12 @@ from .installers.javascript import (
     install_node,
     install_pnpm,
     install_yarn,
+)
+from .installers.productivity import (
+    install_fzf,
+    install_jq,
+    install_powershell,
+    install_ripgrep,
 )
 from .installers.python_data import (
     install_jupyterlab,
@@ -23,11 +31,13 @@ from .models import Priority, Program
 
 ECOSYSTEM_ORDER = [
     "Foundation",
+    "CLI Productivity",
     "JavaScript / TypeScript",
     "AI Developer CLI",
     "Python / Data",
     "Database",
     "Cloud / Platform",
+    "DevOps / Infrastructure",
     "Utilities",
 ]
 
@@ -40,6 +50,7 @@ PROGRAMS: list[Program] = [
         priority=Priority.CORE,
         installer=install_git,
         installed=lambda: exists(r"git\cmd\git.exe"),
+        path_entries=(r"git\cmd",),
     ),
     Program(
         id="gh",
@@ -50,6 +61,7 @@ PROGRAMS: list[Program] = [
         installer=install_gh,
         installed=lambda: exists(r"github\bin\gh.exe"),
         dependencies=("git",),
+        path_entries=(r"github\bin",),
     ),
     Program(
         id="vscode",
@@ -59,6 +71,47 @@ PROGRAMS: list[Program] = [
         priority=Priority.CORE,
         installer=install_vscode,
         installed=lambda: exists(r"VisualCode\Code.exe"),
+        path_entries=(r"VisualCode", r"VisualCode\bin"),
+    ),
+    Program(
+        id="powershell",
+        name="PowerShell 7",
+        description="Modern PowerShell CLI",
+        ecosystem="CLI Productivity",
+        priority=Priority.RECOMMENDED,
+        installer=install_powershell,
+        installed=lambda: exists(r"powershell\pwsh.exe"),
+        path_entries=(r"powershell",),
+    ),
+    Program(
+        id="jq",
+        name="jq",
+        description="JSON query + transform",
+        ecosystem="CLI Productivity",
+        priority=Priority.CORE,
+        installer=install_jq,
+        installed=lambda: exists(r"jq\jq.exe"),
+        path_entries=(r"jq",),
+    ),
+    Program(
+        id="ripgrep",
+        name="ripgrep",
+        description="Fast text/code search",
+        ecosystem="CLI Productivity",
+        priority=Priority.CORE,
+        installer=install_ripgrep,
+        installed=lambda: exists(r"ripgrep\rg.exe"),
+        path_entries=(r"ripgrep",),
+    ),
+    Program(
+        id="fzf",
+        name="fzf",
+        description="Interactive fuzzy finder",
+        ecosystem="CLI Productivity",
+        priority=Priority.RECOMMENDED,
+        installer=install_fzf,
+        installed=lambda: exists(r"fzf\fzf.exe"),
+        path_entries=(r"fzf",),
     ),
     Program(
         id="node",
@@ -68,6 +121,7 @@ PROGRAMS: list[Program] = [
         priority=Priority.CORE,
         installer=install_node,
         installed=lambda: exists(r"node\node.exe"),
+        path_entries=(r"node",),
     ),
     Program(
         id="pnpm",
@@ -78,6 +132,7 @@ PROGRAMS: list[Program] = [
         installer=install_pnpm,
         installed=lambda: exists(r"pnpm\pnpm.exe"),
         dependencies=("node",),
+        path_entries=(r"pnpm",),
     ),
     Program(
         id="bun",
@@ -87,6 +142,7 @@ PROGRAMS: list[Program] = [
         priority=Priority.RECOMMENDED,
         installer=install_bun,
         installed=lambda: exists(r"bun\bun.exe"),
+        path_entries=(r"bun",),
     ),
     Program(
         id="yarn",
@@ -97,6 +153,7 @@ PROGRAMS: list[Program] = [
         installer=install_yarn,
         installed=lambda: exists(r"yarn\yarn.cmd"),
         dependencies=("node",),
+        path_entries=(r"yarn",),
     ),
     Program(
         id="codex",
@@ -107,6 +164,7 @@ PROGRAMS: list[Program] = [
         installer=install_codex,
         installed=lambda: exists(r"codex\codex.cmd") or exists(r"codex\codex.exe"),
         dependencies=("node",),
+        path_entries=(r"codex",),
     ),
     Program(
         id="claude",
@@ -117,6 +175,7 @@ PROGRAMS: list[Program] = [
         installer=install_claude,
         installed=lambda: exists(r"claude\claude.cmd") or exists(r"claude\claude.exe"),
         dependencies=("node",),
+        path_entries=(r"claude",),
     ),
     Program(
         id="uv",
@@ -126,6 +185,7 @@ PROGRAMS: list[Program] = [
         priority=Priority.CORE,
         installer=install_uv,
         installed=lambda: exists(r"uv\uv.exe"),
+        path_entries=(r"uv",),
     ),
     Program(
         id="python",
@@ -136,6 +196,7 @@ PROGRAMS: list[Program] = [
         installer=install_python_portable,
         installed=lambda: exists(r"python\bin\python.exe"),
         dependencies=("uv",),
+        path_entries=(r"python\bin",),
     ),
     Program(
         id="pipx",
@@ -146,6 +207,7 @@ PROGRAMS: list[Program] = [
         installer=install_pipx,
         installed=lambda: exists(r"pipx\bin\pipx.exe"),
         dependencies=("uv", "python"),
+        path_entries=(r"pipx\bin", r"pipx\apps"),
     ),
     Program(
         id="jupyter",
@@ -156,6 +218,7 @@ PROGRAMS: list[Program] = [
         installer=install_jupyterlab,
         installed=lambda: exists(r"jupyterlab\bin\jupyter-lab.exe"),
         dependencies=("uv", "python"),
+        path_entries=(r"jupyterlab\bin",),
     ),
     Program(
         id="mysql",
@@ -165,6 +228,7 @@ PROGRAMS: list[Program] = [
         priority=Priority.RECOMMENDED,
         installer=install_mysql,
         installed=lambda: exists(r"mysql\bin\mysql.exe"),
+        path_entries=(r"mysql\bin",),
     ),
     Program(
         id="dbeaver",
@@ -174,6 +238,27 @@ PROGRAMS: list[Program] = [
         priority=Priority.RECOMMENDED,
         installer=install_dbeaver,
         installed=lambda: exists(r"dbeaver\dbeaver.exe"),
+        path_entries=(r"dbeaver",),
+    ),
+    Program(
+        id="sqlite",
+        name="SQLite CLI",
+        description="Embedded SQL database CLI",
+        ecosystem="Database",
+        priority=Priority.CORE,
+        installer=install_sqlite,
+        installed=lambda: exists(r"sqlite\sqlite3.exe"),
+        path_entries=(r"sqlite",),
+    ),
+    Program(
+        id="duckdb",
+        name="DuckDB CLI",
+        description="Local analytics SQL engine",
+        ecosystem="Database",
+        priority=Priority.RECOMMENDED,
+        installer=install_duckdb,
+        installed=lambda: exists(r"duckdb\duckdb.exe"),
+        path_entries=(r"duckdb",),
     ),
     Program(
         id="xampp",
@@ -183,6 +268,7 @@ PROGRAMS: list[Program] = [
         priority=Priority.OPTIONAL,
         installer=install_xampp,
         installed=lambda: exists(r"xampp\xampp-control.exe"),
+        path_entries=(r"xampp", r"xampp\php", r"xampp\mysql\bin"),
     ),
     Program(
         id="gcloud",
@@ -192,6 +278,7 @@ PROGRAMS: list[Program] = [
         priority=Priority.RECOMMENDED,
         installer=install_gcloud,
         installed=lambda: exists(r"google-cloud\bin\gcloud.cmd"),
+        path_entries=(r"google-cloud\bin",),
     ),
     Program(
         id="cloudflared",
@@ -201,6 +288,7 @@ PROGRAMS: list[Program] = [
         priority=Priority.RECOMMENDED,
         installer=install_cloudflared,
         installed=lambda: exists(r"cloudflared\cloudflared.exe"),
+        path_entries=(r"cloudflared",),
     ),
     Program(
         id="supabase",
@@ -210,6 +298,47 @@ PROGRAMS: list[Program] = [
         priority=Priority.RECOMMENDED,
         installer=install_supabase,
         installed=lambda: exists(r"supabase\supabase.exe"),
+        path_entries=(r"supabase",),
+    ),
+    Program(
+        id="terraform",
+        name="Terraform",
+        description="Infrastructure as Code",
+        ecosystem="DevOps / Infrastructure",
+        priority=Priority.RECOMMENDED,
+        installer=install_terraform,
+        installed=lambda: exists(r"terraform\terraform.exe"),
+        path_entries=(r"terraform",),
+    ),
+    Program(
+        id="kubectl",
+        name="kubectl",
+        description="Kubernetes command line",
+        ecosystem="DevOps / Infrastructure",
+        priority=Priority.RECOMMENDED,
+        installer=install_kubectl,
+        installed=lambda: exists(r"kubectl\kubectl.exe"),
+        path_entries=(r"kubectl",),
+    ),
+    Program(
+        id="helm",
+        name="Helm",
+        description="Kubernetes package manager",
+        ecosystem="DevOps / Infrastructure",
+        priority=Priority.RECOMMENDED,
+        installer=install_helm,
+        installed=lambda: exists(r"helm\helm.exe"),
+        path_entries=(r"helm",),
+    ),
+    Program(
+        id="rclone",
+        name="rclone",
+        description="Cloud storage sync/copy",
+        ecosystem="DevOps / Infrastructure",
+        priority=Priority.RECOMMENDED,
+        installer=install_rclone,
+        installed=lambda: exists(r"rclone\rclone.exe"),
+        path_entries=(r"rclone",),
     ),
     Program(
         id="notepad",
@@ -219,6 +348,7 @@ PROGRAMS: list[Program] = [
         priority=Priority.OPTIONAL,
         installer=install_notepad,
         installed=lambda: exists(r"notepadpp\notepad++.exe"),
+        path_entries=(r"notepadpp",),
     ),
     Program(
         id="wget",
@@ -228,6 +358,7 @@ PROGRAMS: list[Program] = [
         priority=Priority.OPTIONAL,
         installer=install_wget,
         installed=lambda: exists(r"wget\wget.exe"),
+        path_entries=(r"wget",),
     ),
 ]
 

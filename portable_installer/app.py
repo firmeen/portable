@@ -7,9 +7,10 @@ import sys
 
 from .catalog import PROGRAMS, PROGRAM_BY_ID
 from .config import APP_NAME, APP_VERSION, LOG_FILE, Paths, SOFTWARE_ROOT
+from .core.environment import add_user_path
 from .core.planner import resolve_install_plan
 from .logging_utils import LOGGER, log
-from .models import InstallResult, Priority
+from .models import InstallResult, Priority, Program
 from .ui import confirm_installation, interactive_menu
 
 
@@ -28,6 +29,13 @@ def validate_environment(*, interactive: bool = False) -> None:
 
     if interactive and (not sys.stdin.isatty() or not sys.stdout.isatty()):
         raise RuntimeError("Interactive terminal is required")
+
+    missing_path_contract = [program.id for program in PROGRAMS if not program.path_entries]
+    if missing_path_contract:
+        raise RuntimeError(
+            "Permanent PATH metadata is missing for: "
+            + ", ".join(missing_path_contract)
+        )
 
     Paths().ensure()
 
@@ -104,6 +112,17 @@ def plan_lines(plan: list[str], requested: set[str]) -> list[str]:
     return lines
 
 
+def _register_permanent_path(program: Program) -> None:
+    paths = tuple(SOFTWARE_ROOT / relative for relative in program.path_entries)
+    missing = [str(path) for path in paths if not path.exists()]
+    if missing:
+        raise RuntimeError(
+            "Installer completed but permanent PATH target is missing: "
+            + ", ".join(missing)
+        )
+    add_user_path(*paths)
+
+
 def install_selected(selected: list[str]) -> int:
     plan, requested = resolve_install_plan(selected, PROGRAM_BY_ID)
     results: list[InstallResult] = []
@@ -137,6 +156,8 @@ def install_selected(selected: list[str]) -> int:
 
         try:
             detail = program.installer()
+            _register_permanent_path(program)
+            detail = f"{detail} | User PATH: permanent"
             log("SUCCESS", f"{program.name}: {detail}")
             results.append(
                 InstallResult(program_id, program.name, True, "OK", detail, program_id in requested)
@@ -165,7 +186,8 @@ def install_selected(selected: list[str]) -> int:
     print(f"\nSuccessful : {len(results) - failures}")
     print(f"Failed     : {failures}")
     print(f"Log        : {LOG_FILE}")
-    print("\nOpen a new PowerShell window after installation to inherit the updated User PATH.")
+    print("\nEvery successful tool is registered in permanent User PATH.")
+    print("Open a new PowerShell window after installation to inherit the updated User PATH.")
     return 1 if failures else 0
 
 
