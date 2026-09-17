@@ -17,6 +17,7 @@ NEW_TOOL_IDS = {
     "kubectl",
     "helm",
     "rclone",
+    "postgresql",
 }
 
 
@@ -26,6 +27,11 @@ class CatalogTests(unittest.TestCase):
 
     def test_new_tooling_is_registered(self) -> None:
         self.assertTrue(NEW_TOOL_IDS.issubset(PROGRAM_BY_ID))
+
+    def test_postgresql_requires_initialized_cluster(self) -> None:
+        program = PROGRAM_BY_ID["postgresql"]
+        self.assertEqual(program.ecosystem, "Database")
+        self.assertEqual(program.path_entries, (r"postgresql\bin",))
 
     def test_every_program_declares_permanent_user_path(self) -> None:
         missing = [program.id for program in PROGRAMS if not program.path_entries]

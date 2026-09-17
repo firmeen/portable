@@ -14,6 +14,7 @@ from .installers.javascript import (
     install_pnpm,
     install_yarn,
 )
+from .installers.postgresql import install_postgresql
 from .installers.productivity import (
     install_fzf,
     install_jq,
@@ -229,6 +230,16 @@ PROGRAMS: list[Program] = [
         installer=install_mysql,
         installed=lambda: exists(r"mysql\bin\mysql.exe"),
         path_entries=(r"mysql\bin",),
+    ),
+    Program(
+        id="postgresql",
+        name="PostgreSQL",
+        description="Portable server + initialized cluster",
+        ecosystem="Database",
+        priority=Priority.RECOMMENDED,
+        installer=install_postgresql,
+        installed=lambda: exists(r"postgresql\bin\psql.exe") and exists(r"postgresql\data\PG_VERSION"),
+        path_entries=(r"postgresql\bin",),
     ),
     Program(
         id="dbeaver",
