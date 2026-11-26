@@ -83,7 +83,7 @@
 
 | ระดับ | โปรแกรม | ใช้ทำอะไร |
 |---|---|---|
-| Recommended | MySQL | Database binaries |
+| Recommended | MySQL | Ready-to-use local database, port 3307 |
 | Recommended | DBeaver Community | Database GUI |
 | Essential | SQLite CLI (`sqlite3`) | Embedded SQL database CLI |
 | Recommended | DuckDB CLI | SQL analytics สำหรับ CSV / Parquet / JSON |
@@ -174,6 +174,92 @@ helm version --short
 rclone version
 wget --version
 ```
+
+## MySQL — Ready-to-Use Database Server
+
+ติดตั้งผ่านเมนูโดยเลือก MySQL หรือรัน:
+
+~~~powershell
+.\Install.cmd --install mysql --yes
+~~~
+
+Installer ตรวจตำแหน่ง `software/mysql/bin` โดยอัตโนมัติจากตำแหน่งโปรเจกต์ ไม่ต้องค้นหาทุก Drive หรือรัน PowerShell Script เพิ่มเติม เมื่อมี binaries ครบแล้วจะใช้ตัวเดิมเพื่อป้องกันการอัปเกรด Server ทับฐานข้อมูลเดิมโดยไม่ตั้งใจ
+
+สำหรับการติดตั้งใหม่ ระบบจะสร้าง:
+
+- `software/mysql/data/` — โฟลเดอร์เก็บฐานข้อมูล พร้อม initialize ระบบ MySQL อัตโนมัติ
+- `software/mysql/my.ini` — ตั้งค่า port 3307, bind-address 127.0.0.1, utf8mb4 และ utf8mb4_unicode_ci; ปิด MySQL X Protocol สำหรับการใช้งาน local นี้
+- `software/mysql/start_mysql.bat` — ดับเบิลคลิกเพื่อเปิด MySQL Server
+- Permanent User PATH และ Process PATH สำหรับ `mysql`, `mysqld`, `mysqldump` และ `mysqladmin` ผ่านระบบ PATH กลางของ Installer
+
+### 1. เปิด MySQL Server
+
+ดับเบิลคลิก `software/mysql/start_mysql.bat` หรือรัน:
+
+~~~powershell
+.\software\mysql\start_mysql.bat
+~~~
+
+Server จะทำงานในหน้าต่าง Console ไม่ติดตั้ง Windows Service และไม่เปิด Server ค้างไว้เองหลังติดตั้ง ตรวจว่า port 3307 ว่างก่อนเปิด
+
+### 2. เชื่อมต่อ MySQL
+
+เปิด PowerShell/CMD ใหม่เพื่อรับ PATH ล่าสุด:
+
+~~~powershell
+mysql -h 127.0.0.1 -P 3307 -u root
+~~~
+
+ค่าตั้งต้นสำหรับฐานข้อมูลที่เพิ่ง initialize:
+
+| Setting | Value |
+| --- | --- |
+| Host | 127.0.0.1 |
+| Port | 3307 |
+| Username | root |
+| Password | ว่าง (เฉพาะฐานข้อมูลใหม่) |
+| Charset | utf8mb4 |
+| Collation | utf8mb4_unicode_ci |
+
+ใช้ค่าเดียวกันใน DBeaver (เลือก MySQL driver) ได้โดยตรง เมื่อเริ่มใช้งานควรตั้งรหัสผ่าน root ทันที เช่นผ่าน SQL:
+
+~~~sql
+ALTER USER 'root'@'localhost' IDENTIFIED BY 'REPLACE_WITH_A_STRONG_UNIQUE_PASSWORD';
+~~~
+
+เปลี่ยนตัวอย่างรหัสผ่านก่อนรัน หลังตั้งรหัสผ่านให้เพิ่ม `-p` ในคำสั่ง mysql/mysqladmin เพื่อรับ password prompt ไม่ควรใช้ root รหัสผ่านว่างกับข้อมูลสำคัญหรือเปิดรับการเชื่อมต่อจากภายนอก
+
+### 3. เริ่มสร้างฐานข้อมูล
+
+~~~sql
+SHOW DATABASES;
+CREATE DATABASE my_database
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE my_database;
+~~~
+
+### 4. ปิด MySQL Server อย่างปลอดภัย
+
+~~~powershell
+mysqladmin -h 127.0.0.1 -P 3307 -u root shutdown
+~~~
+
+ถ้าตั้งรหัสผ่านแล้ว:
+
+~~~powershell
+mysqladmin -h 127.0.0.1 -P 3307 -u root -p shutdown
+~~~
+
+### 5. การติดตั้งซ้ำ / ฐานข้อมูลเดิม
+
+- ไม่ initialize ซ้ำหากพบฐานข้อมูลที่ initialize แล้ว และไม่ลบ data, my.ini หรือ start_mysql.bat เดิม
+- ถ้า data ไม่ว่างแต่ตรวจไม่พบ system database ที่สมบูรณ์ จะหยุดและแจ้งให้ตรวจสอบ/สำรองข้อมูลด้วยตนเอง
+- my.ini ที่ปรับเองจะถูกเก็บไว้ ค่าการเชื่อมต่อเดิมอาจต่างจาก port 3307; หากยังไม่มีฐานข้อมูลและใช้ config ที่ต่างจากค่า generated ระบบจะไม่ initialize ทับโดยอัตโนมัติ
+- ถ้าพบข้อมูล/config เดิมแต่ binaries ไม่ครบ ให้กู้ binaries เวอร์ชันที่เข้ากันได้ก่อน ไม่ดาวน์โหลด Server เวอร์ชันใหม่ทับข้อมูลเดิม
+- การอัปเกรด MySQL ที่มีฐานข้อมูลจริงต้องสำรองข้อมูลและตรวจ upgrade path ตามเวอร์ชันเอง; Installer นี้จะใช้ binaries เดิมที่สมบูรณ์แทนการอัปเกรดอัตโนมัติ
+- my.ini ใช้ absolute path; หากย้ายโปรเจกต์ ให้แก้ basedir/datadir ให้ตรงกับตำแหน่งใหม่ก่อนเปิด Server แล้วรัน `.Install.cmd --repair-path`
+- หากมี MySQL/XAMPP หลายตัว ให้ใช้ `Get-Command mysql -All` หรือ `where.exe mysql` ตรวจ PATH; เรียก `.softwaremysqlinmysql.exe` โดยตรงได้หากมี conflict
+- หาก binaries เรียกไม่ได้ ให้ตรวจ Microsoft Visual C++ runtime ที่ MySQL เวอร์ชันนั้นต้องการ
 
 ## Dependency จัดการให้อัตโนมัติ
 
