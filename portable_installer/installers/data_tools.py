@@ -5,7 +5,7 @@ import re
 from urllib.parse import urljoin
 
 from ..core.archive import install_zip
-from ..core.environment import add_user_path
+from ..core.environment import add_process_path
 from ..core.github import asset as github_asset
 from ..core.http import request_text
 from ..core.process import verify
@@ -45,7 +45,7 @@ def install_sqlite() -> str:
         required="sqlite3.exe",
         archive_name=filename,
     )
-    add_user_path(target)
+    add_process_path(target)
     return verify([str(target / "sqlite3.exe"), "--version"])
 
 
@@ -61,5 +61,5 @@ def install_duckdb() -> str:
         required="duckdb.exe",
         archive_name=filename,
     )
-    add_user_path(target)
+    add_process_path(target)
     return verify([str(target / "duckdb.exe"), "--version"])

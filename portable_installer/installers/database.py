@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from ..core.archive import install_zip
-from ..core.environment import add_user_path
+from ..core.environment import add_process_path
 from ..core.http import request_text
 from ..core.process import verify
 from .common import software_path, version_tuple
@@ -79,7 +79,7 @@ def install_mysql() -> str:
         archive_name=filename,
         preserve=("data", "my.ini"),
     )
-    add_user_path(target / "bin")
+    add_process_path(target / "bin")
     result = verify([str(target / "bin" / "mysql.exe"), "--version"])
     return f"{result} | {version}"
 
@@ -93,7 +93,7 @@ def install_dbeaver() -> str:
         archive_name="dbeaver.zip",
         preserve=("configuration",),
     )
-    add_user_path(target)
+    add_process_path(target)
     return "dbeaver.exe ready"
 
 
@@ -107,5 +107,5 @@ def install_xampp() -> str:
         archive_name=filename,
         preserve=("htdocs", "mysql/data"),
     )
-    add_user_path(target, target / "php", target / "mysql" / "bin")
+    add_process_path(target, target / "php", target / "mysql" / "bin")
     return f"XAMPP {version} ready"

@@ -7,6 +7,8 @@ import sys
 from dataclasses import dataclass
 
 from .catalog import ECOSYSTEM_ORDER
+from .config import SOFTWARE_ROOT
+from .core.environment import program_path_status
 from .config import APP_NAME, APP_VERSION, SOFTWARE_ROOT
 from .models import Priority, Program
 
@@ -116,9 +118,8 @@ def _priority_label(priority: Priority, color: bool) -> str:
 
 
 def _status_label(program: Program, color: bool) -> str:
-    if program.installed():
-        return style("INSTALLED", GREEN, color)
-    return style("AVAILABLE", DIM, color)
+    status = program_path_status(program, SOFTWARE_ROOT)
+    return style(status, GREEN if status == "INSTALLED" else YELLOW, color)
 
 
 def _menu_rows(

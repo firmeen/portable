@@ -7,7 +7,10 @@ import sys
 
 from .catalog import PROGRAMS, PROGRAM_BY_ID
 from .config import APP_NAME, APP_VERSION, LOG_FILE, Paths, SOFTWARE_ROOT
-from .core.environment import add_user_path
+from .core.environment import (
+    add_user_path, program_path_status, validate_program_paths,
+    verify_commands, verify_user_path,
+)
 from .core.planner import resolve_install_plan
 from .logging_utils import LOGGER, log
 from .models import InstallResult, Priority, Program
@@ -30,7 +33,7 @@ def validate_environment(*, interactive: bool = False) -> None:
     if interactive and (not sys.stdin.isatty() or not sys.stdout.isatty()):
         raise RuntimeError("Interactive terminal is required")
 
-    missing_path_contract = [program.id for program in PROGRAMS if not program.path_entries]
+    missing_path_contract = [program.id for program in PROGRAMS if not program.path_entries or not program.commands]
     if missing_path_contract:
         raise RuntimeError(
             "Permanent PATH metadata is missing for: "
@@ -60,6 +63,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dry-run", action="store_true", help="Show the dependency plan without installing")
     parser.add_argument("--yes", action="store_true", help="Skip the final confirmation prompt")
+    parser.add_argument("--repair-path", action="store_true", help="Repair User PATH for all installed tools without downloading")
     parser.add_argument("--no-color", action="store_true", help="Disable colors in the interactive menu")
     return parser
 
@@ -71,7 +75,7 @@ def list_programs() -> None:
         for program in PROGRAMS:
             if program.ecosystem != ecosystem:
                 continue
-            status = "installed" if program.installed() else "available"
+            status = program_path_status(program, SOFTWARE_ROOT).lower()
             print(
                 f"  {program.id:<12} {program.priority.value:<4} "
                 f"{program.name:<22} {status}"
@@ -112,15 +116,49 @@ def plan_lines(plan: list[str], requested: set[str]) -> list[str]:
     return lines
 
 
-def _register_permanent_path(program: Program) -> None:
-    paths = tuple(SOFTWARE_ROOT / relative for relative in program.path_entries)
-    missing = [str(path) for path in paths if not path.exists()]
-    if missing:
-        raise RuntimeError(
-            "Installer completed but permanent PATH target is missing: "
-            + ", ".join(missing)
-        )
+def _register_permanent_path(program: Program) -> list[str]:
+    paths = validate_program_paths(program, SOFTWARE_ROOT)
     add_user_path(*paths)
+    return verify_commands(program, SOFTWARE_ROOT)
+
+
+def repair_permanent_paths() -> int:
+    """Repair all complete local tools in catalog order, without downloads."""
+    ready: list[tuple[Program, tuple]] = []
+    failures = 0
+    before: dict[str, bool] = {}
+    print("\nPERMANENT PATH AUDIT")
+    for program in PROGRAMS:
+        if not program.installed():
+            if program_path_status(program, SOFTWARE_ROOT) == "INCOMPLETE":
+                log("INCOMPLETE", program.name)
+                failures += 1
+            else:
+                log("SKIPPED", f"{program.name}: not installed")
+            continue
+        try:
+            paths = validate_program_paths(program, SOFTWARE_ROOT)
+            try:
+                verify_user_path(*paths)
+                before[program.id] = True
+            except RuntimeError:
+                before[program.id] = False
+            ready.append((program, paths))
+        except (OSError, RuntimeError) as exc:
+            log("FAILED", f"{program.name}: {exc}")
+            failures += 1
+
+    if ready:
+        add_user_path(*(path for _, paths in ready for path in paths))
+    for program, _ in ready:
+        conflicts = verify_commands(program, SOFTWARE_ROOT)
+        status = "ALREADY SET" if before[program.id] else "REPAIRED"
+        if conflicts:
+            log("CONFLICT", f"{program.name}: {status}; " + "; ".join(conflicts))
+        else:
+            log(status, program.name)
+    print("PATH audit complete. Open a fresh terminal to use the new User PATH.")
+    return 1 if failures else 0
 
 
 def install_selected(selected: list[str]) -> int:
@@ -135,6 +173,10 @@ def install_selected(selected: list[str]) -> int:
     print(f"Requested        : {len(requested)}")
     print(f"Install plan     : {len(plan)}")
     print()
+
+    # Existing dependencies can be omitted by the planner. Refresh their PATH
+    # (and every other installed tool) before running any installer.
+    repair_permanent_paths()
 
     for position, program_id in enumerate(plan, 1):
         program = PROGRAM_BY_ID[program_id]
@@ -156,8 +198,11 @@ def install_selected(selected: list[str]) -> int:
 
         try:
             detail = program.installer()
-            _register_permanent_path(program)
+            conflicts = _register_permanent_path(program)
             detail = f"{detail} | User PATH: permanent"
+            if conflicts:
+                log("CONFLICT", f"{program.name}: " + "; ".join(conflicts))
+                detail += " | PATH CONFLICT: " + "; ".join(conflicts)
             log("SUCCESS", f"{program.name}: {detail}")
             results.append(
                 InstallResult(program_id, program.name, True, "OK", detail, program_id in requested)
@@ -173,6 +218,9 @@ def install_selected(selected: list[str]) -> int:
             )
         print()
 
+    # Restore deterministic catalog precedence across all complete tools.
+    # Report conflicts again after the final ordering is established.
+    repair_permanent_paths()
     print("\n" + "=" * 86)
     print("INSTALLATION SUMMARY")
     print("=" * 86)
@@ -195,6 +243,12 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
 
     try:
+        if args.repair_path:
+            if args.list or args.install or args.preset or args.dry_run:
+                raise RuntimeError("--repair-path must be used on its own")
+            validate_environment(interactive=False)
+            return repair_permanent_paths()
+
         if args.list:
             validate_environment(interactive=False)
             list_programs()

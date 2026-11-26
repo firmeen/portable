@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from ..core.archive import install_single_file, install_zip
-from ..core.environment import add_user_path
+from ..core.environment import add_process_path
 from ..core.github import latest_release
 from ..core.http import request_json, request_text
 from ..core.process import verify
@@ -42,7 +42,7 @@ def install_terraform() -> str:
         required="terraform.exe",
         archive_name=filename,
     )
-    add_user_path(target)
+    add_process_path(target)
     return verify([str(target / "terraform.exe"), "--version"])
 
 
@@ -54,7 +54,7 @@ def install_kubectl() -> str:
     url = f"https://dl.k8s.io/release/{version}/bin/windows/amd64/kubectl.exe"
     target = software_path("kubectl") / "kubectl.exe"
     install_single_file(url, target, filename=f"kubectl-{version}.exe")
-    add_user_path(target.parent)
+    add_process_path(target.parent)
     return verify([str(target), "version", "--client"])
 
 
@@ -73,7 +73,7 @@ def install_helm() -> str:
         required="helm.exe",
         archive_name=filename,
     )
-    add_user_path(target)
+    add_process_path(target)
     return verify([str(target / "helm.exe"), "version", "--short"])
 
 
@@ -86,5 +86,5 @@ def install_rclone() -> str:
         required="rclone.exe",
         archive_name="rclone-current-windows-amd64.zip",
     )
-    add_user_path(target)
+    add_process_path(target)
     return verify([str(target / "rclone.exe"), "version"])

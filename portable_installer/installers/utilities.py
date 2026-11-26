@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from ..core.archive import install_single_file, install_zip
-from ..core.environment import add_user_path
+from ..core.environment import add_process_path
 from ..core.github import asset as github_asset, best_asset
 from ..core.process import verify
 from .common import software_path
@@ -16,7 +16,7 @@ def install_notepad() -> str:
     )
     target = software_path("notepadpp")
     install_zip(url, target, required="notepad++.exe", archive_name=filename)
-    add_user_path(target)
+    add_process_path(target)
     return "notepad++.exe ready"
 
 
@@ -38,5 +38,5 @@ def install_wget() -> str:
     filename, url = best_asset("KnugiHK/wget-on-windows", wget_asset_score)
     target = software_path("wget") / "wget.exe"
     install_single_file(url, target, filename=filename)
-    add_user_path(target.parent)
+    add_process_path(target.parent)
     return verify([str(target), "--version"])
