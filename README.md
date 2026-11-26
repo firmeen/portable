@@ -44,11 +44,9 @@
 
 ### CLI Productivity
 
-- **Windows Terminal (`wt`)** — Official Microsoft stable x64 ZIP, portable mode; `software/terminal` and permanent User PATH. No Microsoft Store or administrator required for normal portable use. Existing `settings/` is retained on updates.
-
-
 | ระดับ | โปรแกรม | ใช้ทำอะไร |
 |---|---|---|
+| Essential | Windows Terminal (`wt`) | เปิด Terminal หลาย Tab/Pane, Fullscreen และเรียกใช้งานผ่าน CLI |
 | Recommended | PowerShell 7 (`pwsh`) | PowerShell รุ่นใหม่แบบ portable |
 | Essential | jq | อ่าน ค้นหา และแปลง JSON จาก CLI |
 | Essential | ripgrep (`rg`) | ค้นหาข้อความและ source code ความเร็วสูง |
@@ -123,18 +121,9 @@
 .\Install.cmd --repair-path
 ~~~
 
-ติดตั้ง Windows Terminal อย่างเดียว:
-
-~~~powershell
-.\Install.cmd --install wt --yes
-~~~
-
-เปิด PowerShell/CMD ใหม่ แล้วเรียก `wt` หรือ `wt -F` ได้จากทุกโฟลเดอร์ (ถ้าไม่มีคำสั่งชื่อเดียวกันที่มีลำดับสูงกว่า)
+สำหรับ Windows Terminal ดู [คู่มือติดตั้งและใช้งาน wt](#windows-terminal-wt) ด้านล่าง
 
 Portable PATH ถูกจัดให้อยู่ก่อน User PATH อื่น โดยไม่แก้ System PATH และไม่ลบ PATH อื่น หาก System PATH, Microsoft Store alias หรือเครื่องมือที่ใช้คำสั่งซ้ำกัน เช่น MySQL/XAMPP มี precedence สูงกว่า ระบบจะแจ้ง PATH CONFLICT เมื่อพบใน PATH; PowerShell aliases/functions ไม่ถูกแก้โดยอัตโนมัติ ใช้ `Get-Command wt -All` หรือ `where.exe wt` ตรวจสอบได้
-
-Windows Terminal portable เก็บ settings ใน software/terminal/settings และไม่รองรับการตั้งเป็น default terminal แบบ MSIX จาก Windows Settings
-
 
 ทุกโปรแกรมใน Catalog ต้องประกาศตำแหน่ง PATH ของตัวเอง และหลังติดตั้งสำเร็จระบบจะตรวจว่าตำแหน่งนั้นมีอยู่จริงก่อนเพิ่มเข้า **User PATH แบบถาวร**
 
@@ -148,6 +137,7 @@ Windows Terminal portable เก็บ settings ใน software/terminal/setting
 git --version
 gh --version
 code --version
+where.exe wt
 pwsh --version
 jq --version
 rg --version
@@ -174,6 +164,93 @@ helm version --short
 rclone version
 wget --version
 ```
+
+## Windows Terminal (`wt`)
+
+Windows Terminal เป็นโปรแกรมสำหรับเปิด PowerShell, CMD และ shell อื่น ๆ ในหน้าต่างเดียว รองรับหลาย Tab, Split Pane, Fullscreen และการเปิดผ่านคำสั่ง `wt` จาก PowerShell/CMD
+
+### 1. ติดตั้ง Windows Terminal
+
+ดับเบิลคลิก `Install.cmd` แล้วเลือก **Windows Terminal** ในหมวด CLI Productivity หรือเปิด PowerShell ในโฟลเดอร์ portable แล้วรัน:
+
+```powershell
+.\Install.cmd --install wt --yes
+```
+
+หากต้องการติดตั้ง Windows Terminal พร้อม PowerShell 7:
+
+```powershell
+.\Install.cmd --install wt powershell --yes
+```
+
+Installer จะดาวน์โหลด Stable Windows x64 ZIP จาก [Microsoft](https://github.com/microsoft/terminal/releases/latest), แตกไฟล์, สร้าง `.portable` เพื่อเปิด Portable Mode และตั้ง Permanent User PATH ไปที่ `software/terminal` อัตโนมัติ โดยไม่ต้องใช้ Microsoft Store หรือ Administrator สำหรับการใช้งาน portable ตามปกติ
+
+### 2. ตำแหน่งไฟล์และการเปิดโปรแกรม
+
+```text
+software/
+└── terminal/
+    ├── WindowsTerminal.exe
+    ├── wt.exe หรือ wt.cmd
+    ├── .portable
+    ├── settings/          # สร้างเมื่อใช้งาน และเก็บไว้เมื่ออัปเดต
+    └── ...
+```
+
+ดับเบิลคลิก `software/terminal/WindowsTerminal.exe` เพื่อเปิดโดยตรง หรือเปิด PowerShell/CMD **หน้าต่างใหม่** หลังติดตั้ง แล้วเรียกจากโฟลเดอร์ใดก็ได้:
+
+```powershell
+wt
+```
+
+หาก ZIP ไม่มี `wt.exe` Installer จะสร้าง `wt.cmd` เป็น launcher สำรองสำหรับส่ง arguments ไปยัง `WindowsTerminal.exe`
+
+### 3. คำสั่ง wt ที่ใช้บ่อย
+
+| คำสั่ง | หน้าที่ |
+|---|---|
+| `wt` | เปิด Windows Terminal |
+| `wt -w new` | เปิดหน้าต่างใหม่ |
+| `wt -F` | เปิดแบบ Fullscreen |
+| `wt -M` | เปิดแบบ Maximized |
+| `wt -d .` | เปิด Terminal ที่โฟลเดอร์ปัจจุบัน |
+| `wt new-tab` | เปิดด้วยคำสั่ง new-tab |
+| `wt split-pane` | เปิดด้วยคำสั่ง split-pane |
+| `wt -p "Windows PowerShell"` | เปิดด้วยโปรไฟล์ Windows PowerShell (หากมีโปรไฟล์นี้) |
+
+ตัวอย่างเปิดหน้าต่างใหม่แบบ Fullscreen ในโฟลเดอร์ปัจจุบัน:
+
+```powershell
+wt -w new -F -d .
+```
+
+### 4. ตรวจสอบและซ่อม Permanent PATH
+
+เปิด PowerShell ใหม่ แล้วตรวจว่าคำสั่ง `wt` ชี้ไปที่ไฟล์ใด:
+
+```powershell
+Get-Command wt -All
+where.exe wt
+[Environment]::GetEnvironmentVariable("Path", "User") -split ';'
+```
+
+ตำแหน่งที่คาดหวังคือ `software/terminal/wt.exe` หรือ `software/terminal/wt.cmd` ภายใต้โฟลเดอร์โปรเจกต์
+
+ถ้าพบว่า `wt` ยังไม่ถูก Recognized ให้กลับมาที่โฟลเดอร์ portable แล้วรัน:
+
+```powershell
+.\Install.cmd --repair-path
+```
+
+จากนั้นเปิด PowerShell/CMD ใหม่อีกครั้ง หาก Terminal host เดิมยังใช้ environment เก่า ให้ปิด host เดิมแล้วเปิดใหม่ ไม่ต้องติดตั้งโปรแกรมซ้ำเพียงเพื่อซ่อม PATH
+
+หากมี Windows Terminal จาก Microsoft Store หรือ System PATH อยู่แล้ว ระบบอาจพบคำสั่งชื่อเดียวกัน ให้ตรวจผล `Get-Command wt -All` ก่อน และสามารถเปิด portable โดยตรงจากโฟลเดอร์โปรเจกต์ได้:
+
+```powershell
+& ".\software\terminal\WindowsTerminal.exe" -F
+```
+
+ไม่ต้องถอน Windows Terminal เดิมหรือแก้ System PATH; Portable Mode ไม่รองรับการตั้งเป็น Default Terminal ของ Windows ผ่านการตั้งค่าแบบ MSIX
 
 ## MySQL — Ready-to-Use Database Server
 
@@ -257,8 +334,8 @@ mysqladmin -h 127.0.0.1 -P 3307 -u root -p shutdown
 - my.ini ที่ปรับเองจะถูกเก็บไว้ ค่าการเชื่อมต่อเดิมอาจต่างจาก port 3307; หากยังไม่มีฐานข้อมูลและใช้ config ที่ต่างจากค่า generated ระบบจะไม่ initialize ทับโดยอัตโนมัติ
 - ถ้าพบข้อมูล/config เดิมแต่ binaries ไม่ครบ ให้กู้ binaries เวอร์ชันที่เข้ากันได้ก่อน ไม่ดาวน์โหลด Server เวอร์ชันใหม่ทับข้อมูลเดิม
 - การอัปเกรด MySQL ที่มีฐานข้อมูลจริงต้องสำรองข้อมูลและตรวจ upgrade path ตามเวอร์ชันเอง; Installer นี้จะใช้ binaries เดิมที่สมบูรณ์แทนการอัปเกรดอัตโนมัติ
-- my.ini ใช้ absolute path; หากย้ายโปรเจกต์ ให้แก้ basedir/datadir ให้ตรงกับตำแหน่งใหม่ก่อนเปิด Server แล้วรัน `.Install.cmd --repair-path`
-- หากมี MySQL/XAMPP หลายตัว ให้ใช้ `Get-Command mysql -All` หรือ `where.exe mysql` ตรวจ PATH; เรียก `.softwaremysqlinmysql.exe` โดยตรงได้หากมี conflict
+- my.ini ใช้ absolute path; หากย้ายโปรเจกต์ ให้แก้ basedir/datadir ให้ตรงกับตำแหน่งใหม่ก่อนเปิด Server แล้วรัน `.\Install.cmd --repair-path`
+- หากมี MySQL/XAMPP หลายตัว ให้ใช้ `Get-Command mysql -All` หรือ `where.exe mysql` ตรวจ PATH; เรียก `.\software\mysql\bin\mysql.exe` โดยตรงได้หากมี conflict
 - หาก binaries เรียกไม่ได้ ให้ตรวจ Microsoft Visual C++ runtime ที่ MySQL เวอร์ชันนั้นต้องการ
 
 ## Dependency จัดการให้อัตโนมัติ
@@ -315,7 +392,7 @@ python .\installer.py --preset recommended --dry-run
 ติดตั้งโดยระบุชื่อ ID:
 
 ```powershell
-python .\installer.py --install jq ripgrep sqlite fzf duckdb powershell terraform kubectl helm rclone
+python .\installer.py --install wt jq ripgrep sqlite fzf duckdb powershell terraform kubectl helm rclone
 ```
 
 ติดตั้ง Recommended preset:
