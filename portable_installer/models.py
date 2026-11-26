@@ -22,6 +22,8 @@ class Program:
     installed: Callable[[], bool]
     dependencies: tuple[str, ...] = ()
     path_entries: tuple[str, ...] = ()
+    commands: tuple[str, ...] = ()
+    required_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

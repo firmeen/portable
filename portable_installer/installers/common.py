@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from ..config import SOFTWARE_ROOT
-from ..core.environment import add_user_path, set_user_environment
+from ..core.environment import add_process_path, set_user_environment
 from ..core.process import run, verify
 from ..logging_utils import log
 
@@ -42,11 +42,11 @@ def npm_global_install(package: str, target: Path, command: str) -> str:
             package,
         ]
     )
-    add_user_path(target)
-
     for executable in (target / f"{command}.cmd", target / f"{command}.exe"):
         if executable.exists():
-            return verify([str(executable), "--version"])
+            result = verify([str(executable), "--version"])
+            add_process_path(target)
+            return result
 
     raise RuntimeError(f"{command} executable was not created")
 
@@ -59,7 +59,7 @@ def command_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 
 
 __all__ = [
-    "add_user_path",
+    "add_process_path",
     "command_env",
     "exists",
     "log",

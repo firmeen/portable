@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..config import CACHE_ROOT
 from ..core.archive import install_zip, replace_tree
-from ..core.environment import add_user_path
+from ..core.environment import add_process_path
 from ..core.github import asset as github_asset
 from ..core.http import download
 from ..core.process import run, verify
@@ -34,7 +34,7 @@ def install_git() -> str:
             raise RuntimeError(r"PortableGit extraction failed: cmd\git.exe missing")
         replace_tree(extracted, target)
 
-    add_user_path(target / "cmd")
+    add_process_path(target / "cmd")
     return verify([str(target / "cmd" / "git.exe"), "--version"])
 
 
@@ -45,7 +45,7 @@ def install_gh() -> str:
     )
     target = software_path("github")
     install_zip(url, target, required=r"bin\gh.exe", archive_name=filename)
-    add_user_path(target / "bin")
+    add_process_path(target / "bin")
     return verify([str(target / "bin" / "gh.exe"), "--version"])
 
 
@@ -59,5 +59,5 @@ def install_vscode() -> str:
         preserve=("data",),
     )
     (target / "data").mkdir(exist_ok=True)
-    add_user_path(target, target / "bin")
+    add_process_path(target, target / "bin")
     return verify([str(target / "bin" / "code.cmd"), "--version"])

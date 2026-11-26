@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ..config import CACHE_ROOT
 from ..core.archive import install_zip
-from ..core.environment import add_user_path, set_user_environment
+from ..core.environment import add_process_path, set_user_environment
 from ..core.github import asset as github_asset
 from ..core.process import run, verify
 from ..logging_utils import log
@@ -53,7 +53,7 @@ def install_uv() -> str:
     target = software_path("uv")
     install_zip(url, target, required="uv.exe", archive_name=filename)
     persist_uv_environment()
-    add_user_path(target)
+    add_process_path(target)
     return verify([str(target / "uv.exe"), "--version"])
 
 
@@ -73,7 +73,7 @@ def install_python_portable() -> str:
     env = uv_environment()
     log("PYTHON", "Installing managed CPython")
     run([str(uv), "python", "install", "--default"], env=env)
-    add_user_path(paths["python_bin"])
+    add_process_path(paths["python_bin"])
     python = paths["python_bin"] / "python.exe"
     if not python.exists():
         raise RuntimeError("Portable python.exe was not created")
@@ -104,7 +104,7 @@ def install_pipx() -> str:
     set_user_environment("PIPX_BIN_DIR", str(app_bin))
     set_user_environment("PIPX_DEFAULT_PYTHON", str(python))
     app_bin.mkdir(parents=True, exist_ok=True)
-    add_user_path(tool_bin, app_bin)
+    add_process_path(tool_bin, app_bin)
     executable = tool_bin / "pipx.exe"
     if not executable.exists():
         raise RuntimeError("pipx.exe was not created")
@@ -122,7 +122,7 @@ def install_jupyterlab() -> str:
     )
     log("UV", "Installing JupyterLab")
     run([str(uv), "tool", "install", "--force", "jupyterlab"], env=env)
-    add_user_path(tool_bin)
+    add_process_path(tool_bin)
     for executable in (tool_bin / "jupyter-lab.exe", tool_bin / "jupyter.exe"):
         if executable.exists():
             return verify([str(executable), "--version"], env=env)

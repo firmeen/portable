@@ -19,6 +19,7 @@ from .installers.productivity import (
     install_jq,
     install_powershell,
     install_ripgrep,
+    install_windows_terminal,
 )
 from .installers.python_data import (
     install_jupyterlab,
@@ -51,6 +52,7 @@ PROGRAMS: list[Program] = [
         installer=install_git,
         installed=lambda: exists(r"git\cmd\git.exe"),
         path_entries=(r"git\cmd",),
+        commands=("git",),
     ),
     Program(
         id="gh",
@@ -62,6 +64,7 @@ PROGRAMS: list[Program] = [
         installed=lambda: exists(r"github\bin\gh.exe"),
         dependencies=("git",),
         path_entries=(r"github\bin",),
+        commands=("gh",),
     ),
     Program(
         id="vscode",
@@ -72,6 +75,19 @@ PROGRAMS: list[Program] = [
         installer=install_vscode,
         installed=lambda: exists(r"VisualCode\Code.exe"),
         path_entries=(r"VisualCode", r"VisualCode\bin"),
+        commands=("Code.exe", "code.cmd"),
+    ),
+    Program(
+        id="wt",
+        name="Windows Terminal",
+        description="Modern terminal emulator",
+        ecosystem="CLI Productivity",
+        priority=Priority.CORE,
+        installer=install_windows_terminal,
+        installed=lambda: exists(r"terminal\WindowsTerminal.exe"),
+        path_entries=(r"terminal",),
+        commands=("wt", "WindowsTerminal"),
+        required_files=(r"terminal\WindowsTerminal.exe", r"terminal\.portable"),
     ),
     Program(
         id="powershell",
@@ -82,6 +98,7 @@ PROGRAMS: list[Program] = [
         installer=install_powershell,
         installed=lambda: exists(r"powershell\pwsh.exe"),
         path_entries=(r"powershell",),
+        commands=("pwsh",),
     ),
     Program(
         id="jq",
@@ -92,6 +109,7 @@ PROGRAMS: list[Program] = [
         installer=install_jq,
         installed=lambda: exists(r"jq\jq.exe"),
         path_entries=(r"jq",),
+        commands=("jq",),
     ),
     Program(
         id="ripgrep",
@@ -102,6 +120,7 @@ PROGRAMS: list[Program] = [
         installer=install_ripgrep,
         installed=lambda: exists(r"ripgrep\rg.exe"),
         path_entries=(r"ripgrep",),
+        commands=("rg",),
     ),
     Program(
         id="fzf",
@@ -112,6 +131,7 @@ PROGRAMS: list[Program] = [
         installer=install_fzf,
         installed=lambda: exists(r"fzf\fzf.exe"),
         path_entries=(r"fzf",),
+        commands=("fzf",),
     ),
     Program(
         id="node",
@@ -122,6 +142,7 @@ PROGRAMS: list[Program] = [
         installer=install_node,
         installed=lambda: exists(r"node\node.exe"),
         path_entries=(r"node",),
+        commands=("node", "npm.cmd", "npx.cmd"),
     ),
     Program(
         id="pnpm",
@@ -133,6 +154,7 @@ PROGRAMS: list[Program] = [
         installed=lambda: exists(r"pnpm\pnpm.exe"),
         dependencies=("node",),
         path_entries=(r"pnpm",),
+        commands=("pnpm",),
     ),
     Program(
         id="bun",
@@ -143,6 +165,7 @@ PROGRAMS: list[Program] = [
         installer=install_bun,
         installed=lambda: exists(r"bun\bun.exe"),
         path_entries=(r"bun",),
+        commands=("bun",),
     ),
     Program(
         id="yarn",
@@ -153,7 +176,8 @@ PROGRAMS: list[Program] = [
         installer=install_yarn,
         installed=lambda: exists(r"yarn\yarn.cmd"),
         dependencies=("node",),
-        path_entries=(r"yarn",),
+        path_entries=(r"yarn", r"corepack"),
+        commands=("yarn.cmd", "corepack.cmd"),
     ),
     Program(
         id="codex",
@@ -165,6 +189,7 @@ PROGRAMS: list[Program] = [
         installed=lambda: exists(r"codex\codex.cmd") or exists(r"codex\codex.exe"),
         dependencies=("node",),
         path_entries=(r"codex",),
+        commands=("codex",),
     ),
     Program(
         id="claude",
@@ -176,6 +201,7 @@ PROGRAMS: list[Program] = [
         installed=lambda: exists(r"claude\claude.cmd") or exists(r"claude\claude.exe"),
         dependencies=("node",),
         path_entries=(r"claude",),
+        commands=("claude",),
     ),
     Program(
         id="uv",
@@ -186,6 +212,7 @@ PROGRAMS: list[Program] = [
         installer=install_uv,
         installed=lambda: exists(r"uv\uv.exe"),
         path_entries=(r"uv",),
+        commands=("uv", "uvx"),
     ),
     Program(
         id="python",
@@ -197,6 +224,7 @@ PROGRAMS: list[Program] = [
         installed=lambda: exists(r"python\bin\python.exe"),
         dependencies=("uv",),
         path_entries=(r"python\bin",),
+        commands=("python",),
     ),
     Program(
         id="pipx",
@@ -208,6 +236,7 @@ PROGRAMS: list[Program] = [
         installed=lambda: exists(r"pipx\bin\pipx.exe"),
         dependencies=("uv", "python"),
         path_entries=(r"pipx\bin", r"pipx\apps"),
+        commands=("pipx",),
     ),
     Program(
         id="jupyter",
@@ -219,6 +248,7 @@ PROGRAMS: list[Program] = [
         installed=lambda: exists(r"jupyterlab\bin\jupyter-lab.exe"),
         dependencies=("uv", "python"),
         path_entries=(r"jupyterlab\bin",),
+        commands=("jupyter-lab", "jupyter"),
     ),
     Program(
         id="mysql",
@@ -229,6 +259,7 @@ PROGRAMS: list[Program] = [
         installer=install_mysql,
         installed=lambda: exists(r"mysql\bin\mysql.exe"),
         path_entries=(r"mysql\bin",),
+        commands=("mysql", "mysqld", "mysqldump"),
     ),
     Program(
         id="dbeaver",
@@ -239,6 +270,7 @@ PROGRAMS: list[Program] = [
         installer=install_dbeaver,
         installed=lambda: exists(r"dbeaver\dbeaver.exe"),
         path_entries=(r"dbeaver",),
+        commands=("dbeaver",),
     ),
     Program(
         id="sqlite",
@@ -249,6 +281,7 @@ PROGRAMS: list[Program] = [
         installer=install_sqlite,
         installed=lambda: exists(r"sqlite\sqlite3.exe"),
         path_entries=(r"sqlite",),
+        commands=("sqlite3",),
     ),
     Program(
         id="duckdb",
@@ -259,6 +292,7 @@ PROGRAMS: list[Program] = [
         installer=install_duckdb,
         installed=lambda: exists(r"duckdb\duckdb.exe"),
         path_entries=(r"duckdb",),
+        commands=("duckdb",),
     ),
     Program(
         id="xampp",
@@ -269,6 +303,7 @@ PROGRAMS: list[Program] = [
         installer=install_xampp,
         installed=lambda: exists(r"xampp\xampp-control.exe"),
         path_entries=(r"xampp", r"xampp\php", r"xampp\mysql\bin"),
+        commands=("xampp-control", "php", "mysql"),
     ),
     Program(
         id="gcloud",
@@ -279,6 +314,7 @@ PROGRAMS: list[Program] = [
         installer=install_gcloud,
         installed=lambda: exists(r"google-cloud\bin\gcloud.cmd"),
         path_entries=(r"google-cloud\bin",),
+        commands=("gcloud.cmd", "gsutil.cmd", "bq.cmd"),
     ),
     Program(
         id="cloudflared",
@@ -289,6 +325,7 @@ PROGRAMS: list[Program] = [
         installer=install_cloudflared,
         installed=lambda: exists(r"cloudflared\cloudflared.exe"),
         path_entries=(r"cloudflared",),
+        commands=("cloudflared",),
     ),
     Program(
         id="supabase",
@@ -299,6 +336,7 @@ PROGRAMS: list[Program] = [
         installer=install_supabase,
         installed=lambda: exists(r"supabase\supabase.exe"),
         path_entries=(r"supabase",),
+        commands=("supabase",),
     ),
     Program(
         id="terraform",
@@ -309,6 +347,7 @@ PROGRAMS: list[Program] = [
         installer=install_terraform,
         installed=lambda: exists(r"terraform\terraform.exe"),
         path_entries=(r"terraform",),
+        commands=("terraform",),
     ),
     Program(
         id="kubectl",
@@ -319,6 +358,7 @@ PROGRAMS: list[Program] = [
         installer=install_kubectl,
         installed=lambda: exists(r"kubectl\kubectl.exe"),
         path_entries=(r"kubectl",),
+        commands=("kubectl",),
     ),
     Program(
         id="helm",
@@ -329,6 +369,7 @@ PROGRAMS: list[Program] = [
         installer=install_helm,
         installed=lambda: exists(r"helm\helm.exe"),
         path_entries=(r"helm",),
+        commands=("helm",),
     ),
     Program(
         id="rclone",
@@ -339,6 +380,7 @@ PROGRAMS: list[Program] = [
         installer=install_rclone,
         installed=lambda: exists(r"rclone\rclone.exe"),
         path_entries=(r"rclone",),
+        commands=("rclone",),
     ),
     Program(
         id="notepad",
@@ -349,6 +391,7 @@ PROGRAMS: list[Program] = [
         installer=install_notepad,
         installed=lambda: exists(r"notepadpp\notepad++.exe"),
         path_entries=(r"notepadpp",),
+        commands=("notepad++",),
     ),
     Program(
         id="wget",
@@ -359,6 +402,7 @@ PROGRAMS: list[Program] = [
         installer=install_wget,
         installed=lambda: exists(r"wget\wget.exe"),
         path_entries=(r"wget",),
+        commands=("wget",),
     ),
 ]
 

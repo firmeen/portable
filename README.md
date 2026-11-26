@@ -44,6 +44,9 @@
 
 ### CLI Productivity
 
+- **Windows Terminal (`wt`)** — Official Microsoft stable x64 ZIP, portable mode; `software/terminal` and permanent User PATH. No Microsoft Store or administrator required for normal portable use. Existing `settings/` is retained on updates.
+
+
 | ระดับ | โปรแกรม | ใช้ทำอะไร |
 |---|---|---|
 | Recommended | PowerShell 7 (`pwsh`) | PowerShell รุ่นใหม่แบบ portable |
@@ -111,6 +114,27 @@
 | Optional | wget | Download จาก command line |
 
 ## Permanent User PATH เป็นข้อบังคับของ Installer
+
+ทุกโปรแกรมใน Catalog รวม Windows Terminal ต้องมีไฟล์คำสั่งและ PATH contract ที่ตรวจสอบได้ ระบบบันทึก User PATH ผ่าน Registry หลังตรวจสอบไฟล์ พร้อมอัปเดต Process PATH สำหรับการติดตั้ง dependency
+
+ซ่อม PATH ของทุกโปรแกรมที่ติดตั้งแล้วโดยไม่ดาวน์โหลดหรือติดตั้งซ้ำ:
+
+~~~powershell
+.\Install.cmd --repair-path
+~~~
+
+ติดตั้ง Windows Terminal อย่างเดียว:
+
+~~~powershell
+.\Install.cmd --install wt --yes
+~~~
+
+เปิด PowerShell/CMD ใหม่ แล้วเรียก `wt` หรือ `wt -F` ได้จากทุกโฟลเดอร์ (ถ้าไม่มีคำสั่งชื่อเดียวกันที่มีลำดับสูงกว่า)
+
+Portable PATH ถูกจัดให้อยู่ก่อน User PATH อื่น โดยไม่แก้ System PATH และไม่ลบ PATH อื่น หาก System PATH, Microsoft Store alias หรือเครื่องมือที่ใช้คำสั่งซ้ำกัน เช่น MySQL/XAMPP มี precedence สูงกว่า ระบบจะแจ้ง PATH CONFLICT เมื่อพบใน PATH; PowerShell aliases/functions ไม่ถูกแก้โดยอัตโนมัติ ใช้ `Get-Command wt -All` หรือ `where.exe wt` ตรวจสอบได้
+
+Windows Terminal portable เก็บ settings ใน software/terminal/settings และไม่รองรับการตั้งเป็น default terminal แบบ MSIX จาก Windows Settings
+
 
 ทุกโปรแกรมใน Catalog ต้องประกาศตำแหน่ง PATH ของตัวเอง และหลังติดตั้งสำเร็จระบบจะตรวจว่าตำแหน่งนั้นมีอยู่จริงก่อนเพิ่มเข้า **User PATH แบบถาวร**
 

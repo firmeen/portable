@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 from ..core.archive import install_single_file, install_zip
-from ..core.environment import add_user_path, set_user_environment
+from ..core.environment import add_process_path, set_user_environment
 from ..core.github import asset as github_asset
 from ..core.http import request_json
 from ..core.process import run, verify
@@ -26,7 +26,7 @@ def install_node() -> str:
     version, filename, url = node_source()
     target = software_path("node")
     install_zip(url, target, required="node.exe", archive_name=filename)
-    add_user_path(target)
+    add_process_path(target)
     return f"{verify([str(target / 'node.exe'), '--version'])} (LTS {version})"
 
 
@@ -52,7 +52,7 @@ def install_bun() -> str:
     )
     target = software_path("bun")
     install_zip(url, target, required="bun.exe", archive_name=filename)
-    add_user_path(target)
+    add_process_path(target)
     return verify([str(target / "bun.exe"), "--version"])
 
 
@@ -63,7 +63,7 @@ def install_pnpm() -> str:
     )
     target = software_path("pnpm") / "pnpm.exe"
     install_single_file(url, target, filename=filename)
-    add_user_path(target.parent)
+    add_process_path(target.parent)
     return verify([str(target), "--version"])
 
 
@@ -85,7 +85,7 @@ def install_yarn() -> str:
         [str(corepack), "enable", "--install-directory", str(yarn_dir), "yarn"],
         env=env,
     )
-    add_user_path(yarn_dir)
+    add_process_path(yarn_dir)
     yarn = yarn_dir / "yarn.cmd"
     if not yarn.exists():
         raise RuntimeError("Yarn shim was not created")
