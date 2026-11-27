@@ -44,11 +44,9 @@
 
 ### CLI Productivity
 
-- **Windows Terminal (`wt`)** — Official Microsoft stable x64 ZIP, portable mode; `software/terminal` and permanent User PATH. No Microsoft Store or administrator required for normal portable use. Existing `settings/` is retained on updates.
-
-
 | ระดับ | โปรแกรม | ใช้ทำอะไร |
 |---|---|---|
+| Essential | Windows Terminal (`wt`) | เปิด Terminal หลาย Tab/Pane, Fullscreen และเรียกใช้งานผ่าน CLI |
 | Recommended | PowerShell 7 (`pwsh`) | PowerShell รุ่นใหม่แบบ portable |
 | Essential | jq | อ่าน ค้นหา และแปลง JSON จาก CLI |
 | Essential | ripgrep (`rg`) | ค้นหาข้อความและ source code ความเร็วสูง |
@@ -83,7 +81,7 @@
 
 | ระดับ | โปรแกรม | ใช้ทำอะไร |
 |---|---|---|
-| Recommended | MySQL | Database binaries |
+| Recommended | MySQL | Ready-to-use local database, port 3307 |
 | Recommended | DBeaver Community | Database GUI |
 | Essential | SQLite CLI (`sqlite3`) | Embedded SQL database CLI |
 | Recommended | DuckDB CLI | SQL analytics สำหรับ CSV / Parquet / JSON |
@@ -123,18 +121,9 @@
 .\Install.cmd --repair-path
 ~~~
 
-ติดตั้ง Windows Terminal อย่างเดียว:
-
-~~~powershell
-.\Install.cmd --install wt --yes
-~~~
-
-เปิด PowerShell/CMD ใหม่ แล้วเรียก `wt` หรือ `wt -F` ได้จากทุกโฟลเดอร์ (ถ้าไม่มีคำสั่งชื่อเดียวกันที่มีลำดับสูงกว่า)
+สำหรับ Windows Terminal ดู [คู่มือติดตั้งและใช้งาน wt](#windows-terminal-wt) ด้านล่าง
 
 Portable PATH ถูกจัดให้อยู่ก่อน User PATH อื่น โดยไม่แก้ System PATH และไม่ลบ PATH อื่น หาก System PATH, Microsoft Store alias หรือเครื่องมือที่ใช้คำสั่งซ้ำกัน เช่น MySQL/XAMPP มี precedence สูงกว่า ระบบจะแจ้ง PATH CONFLICT เมื่อพบใน PATH; PowerShell aliases/functions ไม่ถูกแก้โดยอัตโนมัติ ใช้ `Get-Command wt -All` หรือ `where.exe wt` ตรวจสอบได้
-
-Windows Terminal portable เก็บ settings ใน software/terminal/settings และไม่รองรับการตั้งเป็น default terminal แบบ MSIX จาก Windows Settings
-
 
 ทุกโปรแกรมใน Catalog ต้องประกาศตำแหน่ง PATH ของตัวเอง และหลังติดตั้งสำเร็จระบบจะตรวจว่าตำแหน่งนั้นมีอยู่จริงก่อนเพิ่มเข้า **User PATH แบบถาวร**
 
@@ -148,6 +137,7 @@ Windows Terminal portable เก็บ settings ใน software/terminal/setting
 git --version
 gh --version
 code --version
+where.exe wt
 pwsh --version
 jq --version
 rg --version
@@ -174,6 +164,179 @@ helm version --short
 rclone version
 wget --version
 ```
+
+## Windows Terminal (`wt`)
+
+Windows Terminal เป็นโปรแกรมสำหรับเปิด PowerShell, CMD และ shell อื่น ๆ ในหน้าต่างเดียว รองรับหลาย Tab, Split Pane, Fullscreen และการเปิดผ่านคำสั่ง `wt` จาก PowerShell/CMD
+
+### 1. ติดตั้ง Windows Terminal
+
+ดับเบิลคลิก `Install.cmd` แล้วเลือก **Windows Terminal** ในหมวด CLI Productivity หรือเปิด PowerShell ในโฟลเดอร์ portable แล้วรัน:
+
+```powershell
+.\Install.cmd --install wt --yes
+```
+
+หากต้องการติดตั้ง Windows Terminal พร้อม PowerShell 7:
+
+```powershell
+.\Install.cmd --install wt powershell --yes
+```
+
+Installer จะดาวน์โหลด Stable Windows x64 ZIP จาก [Microsoft](https://github.com/microsoft/terminal/releases/latest), แตกไฟล์, สร้าง `.portable` เพื่อเปิด Portable Mode และตั้ง Permanent User PATH ไปที่ `software/terminal` อัตโนมัติ โดยไม่ต้องใช้ Microsoft Store หรือ Administrator สำหรับการใช้งาน portable ตามปกติ
+
+### 2. ตำแหน่งไฟล์และการเปิดโปรแกรม
+
+```text
+software/
+└── terminal/
+    ├── WindowsTerminal.exe
+    ├── wt.exe หรือ wt.cmd
+    ├── .portable
+    ├── settings/          # สร้างเมื่อใช้งาน และเก็บไว้เมื่ออัปเดต
+    └── ...
+```
+
+ดับเบิลคลิก `software/terminal/WindowsTerminal.exe` เพื่อเปิดโดยตรง หรือเปิด PowerShell/CMD **หน้าต่างใหม่** หลังติดตั้ง แล้วเรียกจากโฟลเดอร์ใดก็ได้:
+
+```powershell
+wt
+```
+
+หาก ZIP ไม่มี `wt.exe` Installer จะสร้าง `wt.cmd` เป็น launcher สำรองสำหรับส่ง arguments ไปยัง `WindowsTerminal.exe`
+
+### 3. คำสั่ง wt ที่ใช้บ่อย
+
+| คำสั่ง | หน้าที่ |
+|---|---|
+| `wt` | เปิด Windows Terminal |
+| `wt -w new` | เปิดหน้าต่างใหม่ |
+| `wt -F` | เปิดแบบ Fullscreen |
+| `wt -M` | เปิดแบบ Maximized |
+| `wt -d .` | เปิด Terminal ที่โฟลเดอร์ปัจจุบัน |
+| `wt new-tab` | เปิดด้วยคำสั่ง new-tab |
+| `wt split-pane` | เปิดด้วยคำสั่ง split-pane |
+| `wt -p "Windows PowerShell"` | เปิดด้วยโปรไฟล์ Windows PowerShell (หากมีโปรไฟล์นี้) |
+
+ตัวอย่างเปิดหน้าต่างใหม่แบบ Fullscreen ในโฟลเดอร์ปัจจุบัน:
+
+```powershell
+wt -w new -F -d .
+```
+
+### 4. ตรวจสอบและซ่อม Permanent PATH
+
+เปิด PowerShell ใหม่ แล้วตรวจว่าคำสั่ง `wt` ชี้ไปที่ไฟล์ใด:
+
+```powershell
+Get-Command wt -All
+where.exe wt
+[Environment]::GetEnvironmentVariable("Path", "User") -split ';'
+```
+
+ตำแหน่งที่คาดหวังคือ `software/terminal/wt.exe` หรือ `software/terminal/wt.cmd` ภายใต้โฟลเดอร์โปรเจกต์
+
+ถ้าพบว่า `wt` ยังไม่ถูก Recognized ให้กลับมาที่โฟลเดอร์ portable แล้วรัน:
+
+```powershell
+.\Install.cmd --repair-path
+```
+
+จากนั้นเปิด PowerShell/CMD ใหม่อีกครั้ง หาก Terminal host เดิมยังใช้ environment เก่า ให้ปิด host เดิมแล้วเปิดใหม่ ไม่ต้องติดตั้งโปรแกรมซ้ำเพียงเพื่อซ่อม PATH
+
+หากมี Windows Terminal จาก Microsoft Store หรือ System PATH อยู่แล้ว ระบบอาจพบคำสั่งชื่อเดียวกัน ให้ตรวจผล `Get-Command wt -All` ก่อน และสามารถเปิด portable โดยตรงจากโฟลเดอร์โปรเจกต์ได้:
+
+```powershell
+& ".\software\terminal\WindowsTerminal.exe" -F
+```
+
+ไม่ต้องถอน Windows Terminal เดิมหรือแก้ System PATH; Portable Mode ไม่รองรับการตั้งเป็น Default Terminal ของ Windows ผ่านการตั้งค่าแบบ MSIX
+
+## MySQL — Ready-to-Use Database Server
+
+ติดตั้งผ่านเมนูโดยเลือก MySQL หรือรัน:
+
+~~~powershell
+.\Install.cmd --install mysql --yes
+~~~
+
+Installer ตรวจตำแหน่ง `software/mysql/bin` โดยอัตโนมัติจากตำแหน่งโปรเจกต์ ไม่ต้องค้นหาทุก Drive หรือรัน PowerShell Script เพิ่มเติม เมื่อมี binaries ครบแล้วจะใช้ตัวเดิมเพื่อป้องกันการอัปเกรด Server ทับฐานข้อมูลเดิมโดยไม่ตั้งใจ
+
+สำหรับการติดตั้งใหม่ ระบบจะสร้าง:
+
+- `software/mysql/data/` — โฟลเดอร์เก็บฐานข้อมูล พร้อม initialize ระบบ MySQL อัตโนมัติ
+- `software/mysql/my.ini` — ตั้งค่า port 3307, bind-address 127.0.0.1, utf8mb4 และ utf8mb4_unicode_ci; ปิด MySQL X Protocol สำหรับการใช้งาน local นี้
+- `software/mysql/start_mysql.bat` — ดับเบิลคลิกเพื่อเปิด MySQL Server
+- Permanent User PATH และ Process PATH สำหรับ `mysql`, `mysqld`, `mysqldump` และ `mysqladmin` ผ่านระบบ PATH กลางของ Installer
+
+### 1. เปิด MySQL Server
+
+ดับเบิลคลิก `software/mysql/start_mysql.bat` หรือรัน:
+
+~~~powershell
+.\software\mysql\start_mysql.bat
+~~~
+
+Server จะทำงานในหน้าต่าง Console ไม่ติดตั้ง Windows Service และไม่เปิด Server ค้างไว้เองหลังติดตั้ง ตรวจว่า port 3307 ว่างก่อนเปิด
+
+### 2. เชื่อมต่อ MySQL
+
+เปิด PowerShell/CMD ใหม่เพื่อรับ PATH ล่าสุด:
+
+~~~powershell
+mysql -h 127.0.0.1 -P 3307 -u root
+~~~
+
+ค่าตั้งต้นสำหรับฐานข้อมูลที่เพิ่ง initialize:
+
+| Setting | Value |
+| --- | --- |
+| Host | 127.0.0.1 |
+| Port | 3307 |
+| Username | root |
+| Password | ว่าง (เฉพาะฐานข้อมูลใหม่) |
+| Charset | utf8mb4 |
+| Collation | utf8mb4_unicode_ci |
+
+ใช้ค่าเดียวกันใน DBeaver (เลือก MySQL driver) ได้โดยตรง เมื่อเริ่มใช้งานควรตั้งรหัสผ่าน root ทันที เช่นผ่าน SQL:
+
+~~~sql
+ALTER USER 'root'@'localhost' IDENTIFIED BY 'REPLACE_WITH_A_STRONG_UNIQUE_PASSWORD';
+~~~
+
+เปลี่ยนตัวอย่างรหัสผ่านก่อนรัน หลังตั้งรหัสผ่านให้เพิ่ม `-p` ในคำสั่ง mysql/mysqladmin เพื่อรับ password prompt ไม่ควรใช้ root รหัสผ่านว่างกับข้อมูลสำคัญหรือเปิดรับการเชื่อมต่อจากภายนอก
+
+### 3. เริ่มสร้างฐานข้อมูล
+
+~~~sql
+SHOW DATABASES;
+CREATE DATABASE my_database
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE my_database;
+~~~
+
+### 4. ปิด MySQL Server อย่างปลอดภัย
+
+~~~powershell
+mysqladmin -h 127.0.0.1 -P 3307 -u root shutdown
+~~~
+
+ถ้าตั้งรหัสผ่านแล้ว:
+
+~~~powershell
+mysqladmin -h 127.0.0.1 -P 3307 -u root -p shutdown
+~~~
+
+### 5. การติดตั้งซ้ำ / ฐานข้อมูลเดิม
+
+- ไม่ initialize ซ้ำหากพบฐานข้อมูลที่ initialize แล้ว และไม่ลบ data, my.ini หรือ start_mysql.bat เดิม
+- ถ้า data ไม่ว่างแต่ตรวจไม่พบ system database ที่สมบูรณ์ จะหยุดและแจ้งให้ตรวจสอบ/สำรองข้อมูลด้วยตนเอง
+- my.ini ที่ปรับเองจะถูกเก็บไว้ ค่าการเชื่อมต่อเดิมอาจต่างจาก port 3307; หากยังไม่มีฐานข้อมูลและใช้ config ที่ต่างจากค่า generated ระบบจะไม่ initialize ทับโดยอัตโนมัติ
+- ถ้าพบข้อมูล/config เดิมแต่ binaries ไม่ครบ ให้กู้ binaries เวอร์ชันที่เข้ากันได้ก่อน ไม่ดาวน์โหลด Server เวอร์ชันใหม่ทับข้อมูลเดิม
+- การอัปเกรด MySQL ที่มีฐานข้อมูลจริงต้องสำรองข้อมูลและตรวจ upgrade path ตามเวอร์ชันเอง; Installer นี้จะใช้ binaries เดิมที่สมบูรณ์แทนการอัปเกรดอัตโนมัติ
+- my.ini ใช้ absolute path; หากย้ายโปรเจกต์ ให้แก้ basedir/datadir ให้ตรงกับตำแหน่งใหม่ก่อนเปิด Server แล้วรัน `.\Install.cmd --repair-path`
+- หากมี MySQL/XAMPP หลายตัว ให้ใช้ `Get-Command mysql -All` หรือ `where.exe mysql` ตรวจ PATH; เรียก `.\software\mysql\bin\mysql.exe` โดยตรงได้หากมี conflict
+- หาก binaries เรียกไม่ได้ ให้ตรวจ Microsoft Visual C++ runtime ที่ MySQL เวอร์ชันนั้นต้องการ
 
 ## Dependency จัดการให้อัตโนมัติ
 
@@ -229,7 +392,7 @@ python .\installer.py --preset recommended --dry-run
 ติดตั้งโดยระบุชื่อ ID:
 
 ```powershell
-python .\installer.py --install jq ripgrep sqlite fzf duckdb powershell terraform kubectl helm rclone
+python .\installer.py --install wt jq ripgrep sqlite fzf duckdb powershell terraform kubectl helm rclone
 ```
 
 ติดตั้ง Recommended preset:
